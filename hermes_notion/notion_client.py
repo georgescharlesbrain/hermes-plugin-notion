@@ -58,6 +58,19 @@ def get_page(token: str, page_id: str) -> Dict[str, Any]:
 def get_block(token: str, block_id: str) -> Dict[str, Any]:
     return _request(token, f"/blocks/{block_id}", method="GET")
 
+def extract_block_text(block: Dict[str, Any]) -> str:
+    """Extract plain text content from a Notion block."""
+    if not isinstance(block, dict):
+        return ""
+    btype = block.get("type", "")
+    type_obj = block.get(btype, {})
+    if isinstance(type_obj, dict):
+        rich_text = type_obj.get("rich_text", [])
+        if isinstance(rich_text, list):
+            parts = [item.get("plain_text", "") for item in rich_text if isinstance(item, dict)]
+            return "".join(parts).strip()
+    return ""
+
 def create_comment_reply(token: str, discussion_id: str, content: str) -> Dict[str, Any]:
     # Chunk content if necessary (Notion limit is 2000 chars per text block)
     chunks = []

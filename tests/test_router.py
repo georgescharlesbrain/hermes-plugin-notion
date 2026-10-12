@@ -2,6 +2,7 @@ import pytest
 from hermes_notion.settings import NotionSettings
 from hermes_notion.router import (
     evaluate_comment,
+    is_terminal_acknowledgment,
     KOEN_USER_ID,
     KOEN_EMAIL,
     AROA_BOT_ID,
@@ -25,6 +26,34 @@ def aroa_settings():
         bot_user_id="bot_user_aroa_123",
         mention_names=["aroa", "aroa@ufahamu.xyz"],
     )
+
+def test_is_terminal_acknowledgment():
+    assert is_terminal_acknowledgment("thanks")
+    assert is_terminal_acknowledgment("Thank you!")
+    assert is_terminal_acknowledgment("got it")
+    assert is_terminal_acknowledgment("noted")
+    assert is_terminal_acknowledgment("all good")
+    assert is_terminal_acknowledgment("perfect, thank you")
+    assert is_terminal_acknowledgment("@greta thanks", ["greta"])
+    assert is_terminal_acknowledgment("Greta thank you so much", ["greta"])
+
+    # Non-terminal phrases
+    assert not is_terminal_acknowledgment("Thanks, but can you fix the date?")
+    assert not is_terminal_acknowledgment("Thank you? Is it done?")
+    assert not is_terminal_acknowledgment("Please do this")
+    assert not is_terminal_acknowledgment("")
+
+def test_drop_terminal_acknowledgment(greta_settings):
+    comment = {
+        "id": "c_ack",
+        "discussion_id": "d1",
+        "created_by": {"id": KOEN_USER_ID, "type": "person"},
+        "display_name": {"type": "user", "resolved_name": "GCB"},
+        "rich_text": [{"type": "text", "plain_text": "Thank you so much!"}]
+    }
+    routed = evaluate_comment(comment, greta_settings, discussion_owner="greta")
+    assert not routed.actionable
+    assert routed.reason == "terminal_acknowledgment"
 
 def test_drop_self_comment_greta(greta_settings):
     comment = {

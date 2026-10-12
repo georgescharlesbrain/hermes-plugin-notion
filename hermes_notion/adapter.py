@@ -14,9 +14,7 @@ from gateway.config import Platform, PlatformConfig
 from gateway.platforms.base import BasePlatformAdapter, SendResult
 from gateway.platforms.event import MessageEvent, MessageType
 
-from . import notion_client
-from . import router
-from . import storage
+from . import notion_client, router, storage
 from .settings import NotionSettings, WEBHOOK_PATH
 
 try:
@@ -31,11 +29,9 @@ logger = logging.getLogger(__name__)
 PLATFORM_NAME = "notion"
 MAX_BODY_BYTES = 1_048_576
 
-plugin_context: Any = None
-
 def check_requirements() -> bool:
     """Available when NOTION_API_TOKEN is set."""
-    token = os.getenv("NOTION_API_TOKEN") or os.getenv("NOTION_API_KEY")
+    token = os.getenv("NOTION_API_TOKEN") or os.getenv("NOTION_API_TOKEN_GRETA") or os.getenv("NOTION_API_TOKEN_AROA")
     return bool(token and token.strip())
 
 def is_connected(adapter: Optional[BasePlatformAdapter] = None) -> bool:
@@ -48,7 +44,7 @@ def _profile_from_path(path: str) -> str:
     return "greta"
 
 class NotionAdapter(BasePlatformAdapter):
-    """Notion <-> Hermes: HMAC-verified comment webhooks, thread write-back."""
+    """Notion <-> Hermes: HMAC-verified comment webhooks, thread write-back, and circuit breaker."""
 
     def __init__(self, config: PlatformConfig):
         super().__init__(config, Platform(PLATFORM_NAME))
@@ -75,7 +71,6 @@ class NotionAdapter(BasePlatformAdapter):
         self.settings = NotionSettings.from_config(getattr(self.config, "extra", None))
 
         app = web.Application(client_max_size=MAX_BODY_BYTES)
-        # Support base and profile-specific paths
         app.router.add_post(self.settings.webhook_path, self._handle_webhook)
         app.router.add_get(self.settings.webhook_path, self._handle_health)
         app.router.add_post("/webhooks/notion/greta", self._handle_webhook)
@@ -127,6 +122,14 @@ class NotionAdapter(BasePlatformAdapter):
             logger.warning("[notion] Cannot send comment reply: missing discussion_id in chat_id %s", chat_id)
             return SendResult(success=False, error="missing discussion_id")
 
+        # Circuit breaker / Cooldown guard before posting reply
+        allowed, reason = await asyncio.to_thread(
+            storage.check_circuit_breaker, discussion_id, 3.0, 5, 60.0
+        )
+        if not allowed:
+            logger.warning("[notion] Circuit breaker blocked outgoing reply on %s: %s", discussion_id, reason)
+            return SendResult(success=False, error=reason)
+
         profile = meta.get("notion_profile") or self.settings.profile
         profile_settings = NotionSettings.for_profile(profile)
         token = profile_settings.token or self.settings.token
@@ -135,7 +138,7 @@ class NotionAdapter(BasePlatformAdapter):
             return SendResult(success=False, error="missing NOTION_API_TOKEN")
 
         try:
-            logger.info("[notion] Posting reply to discussion %s (%d chars)", discussion_id, len(content))
+            logger.info("[notion] Posting reply to discussion %s (%d chars) as [%s]", discussion_id, len(content), profile)
             res = await asyncio.to_thread(
                 notion_client.create_comment_reply,
                 token=token,
@@ -143,6 +146,12 @@ class NotionAdapter(BasePlatformAdapter):
                 content=content,
             )
             comment_id = res.get("id")
+
+            # Record timestamp for cooldown and velocity breaker
+            await asyncio.to_thread(storage.record_bot_reply, discussion_id)
+            if meta.get("comment_id"):
+                await asyncio.to_thread(storage.mark_comment_processed, meta["comment_id"])
+
             return SendResult(success=True, message_id=comment_id)
         except Exception as exc:
             logger.exception("[notion] Failed to create comment reply in discussion %s: %s", discussion_id, exc)
@@ -201,6 +210,11 @@ class NotionAdapter(BasePlatformAdapter):
             entity_type = entity.get("type", "")
             entity_id = entity.get("id", "") or ev.get("id", "")
 
+            # Filter out non-creation events to prevent double-answering on edits
+            if ev_type and ev_type != "comment.created":
+                logger.debug("[notion] Ignoring event type %s for entity %s", ev_type, entity_id)
+                continue
+
             if ev_type.startswith("comment") or entity_type == "comment":
                 comment_id = entity_id
                 if comment_id:
@@ -209,10 +223,15 @@ class NotionAdapter(BasePlatformAdapter):
         return web.json_response({"status": "accepted"}, status=200)
 
     async def _process_comment_id(self, comment_id: str, profile: str) -> None:
+        # Idempotency deduplication check
+        if await asyncio.to_thread(storage.is_comment_processed, comment_id):
+            logger.info("[notion] Comment %s already processed; skipping duplicate", comment_id)
+            return
+
         profile_settings = NotionSettings.for_profile(profile)
         token = profile_settings.token or self.settings.token
         if not token:
-            logger.error("[notion] Cannot fetch comment %s: missing NOTION_API_TOKEN for profile %s", comment_id, profile)
+            logger.error("[notion] Cannot fetch comment %s: missing NOTION_API_TOKEN for %s", comment_id, profile)
             return
 
         try:
@@ -231,7 +250,29 @@ class NotionAdapter(BasePlatformAdapter):
 
         if not routed.actionable:
             logger.info("[notion] Comment %s ignored (reason: %s)", comment_id, routed.reason)
+            # Mark ignored comments as processed so they are not re-evaluated
+            await asyncio.to_thread(storage.mark_comment_processed, comment_id)
             return
+
+        # Circuit breaker / cooldown check before delegating to agent
+        allowed, cb_reason = await asyncio.to_thread(
+            storage.check_circuit_breaker, routed.discussion_id, 3.0, 5, 60.0
+        )
+        if not allowed:
+            logger.warning("[notion] Circuit breaker blocked comment %s on %s: %s", comment_id, routed.discussion_id, cb_reason)
+            return
+
+        # Fetch referenced page block text for text selection comments
+        parent = comment_obj.get("parent", {})
+        parent_type = parent.get("type", "")
+        parent_block_id = parent.get("block_id")
+        block_text = ""
+        if parent_type == "block_id" and parent_block_id:
+            try:
+                block_obj = await asyncio.to_thread(notion_client.get_block, token, parent_block_id)
+                block_text = notion_client.extract_block_text(block_obj)
+            except Exception as exc:
+                logger.debug("[notion] Could not fetch parent block %s: %s", parent_block_id, exc)
 
         logger.info("[notion] Actionable comment %s from %s: %s", comment_id, routed.author_name, routed.reason)
 
@@ -247,11 +288,20 @@ class NotionAdapter(BasePlatformAdapter):
         )
         source.profile = profile
 
-        text_prompt = (
-            f"Notion comment from {routed.author_name}:\n\n"
-            f"{routed.text}\n\n"
-            f"[Discussion ID: {routed.discussion_id} | Comment ID: {routed.comment_id}]"
-        )
+        if block_text:
+            text_prompt = (
+                f"Notion comment from {routed.author_name} referencing page text:\n"
+                f"> {block_text}\n\n"
+                f"Comment:\n"
+                f"{routed.text}\n\n"
+                f"[Discussion ID: {routed.discussion_id} | Comment ID: {routed.comment_id}]"
+            )
+        else:
+            text_prompt = (
+                f"Notion comment from {routed.author_name}:\n\n"
+                f"{routed.text}\n\n"
+                f"[Discussion ID: {routed.discussion_id} | Comment ID: {routed.comment_id}]"
+            )
 
         msg_event = MessageEvent(
             text=text_prompt,

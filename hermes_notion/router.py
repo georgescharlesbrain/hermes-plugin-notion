@@ -33,6 +33,13 @@ ALLOWED_CALLERS: Dict[str, Dict[str, Any]] = {
     },
 }
 
+TERMINAL_ACKNOWLEDGMENT_PATTERNS: Set[str] = {
+    "thank you", "thanks", "thx", "ty", "thank you very much", "thank you so much",
+    "ok", "okay", "got it", "noted", "k", "cool", "great", "perfect", "done",
+    "all good", "understood", "no problem", "youre welcome", "you are welcome",
+    "great thanks", "thanks a lot", "many thanks"
+}
+
 @dataclass
 class RoutedComment:
     actionable: bool
@@ -78,6 +85,28 @@ def is_author_authorized(comment: Dict[str, Any], target_bot: str) -> bool:
     if any(n in resolved_name for n in rules.get("names", set())):
         return True
 
+    return False
+
+def is_terminal_acknowledgment(text: str, mention_names: Optional[List[str]] = None) -> bool:
+    """True when text is solely an acknowledgment or gratitude with no instruction/question."""
+    if not text:
+        return False
+    if "?" in text:
+        return False
+    lower = text.lower()
+    # Strip known bot names / mentions
+    if mention_names:
+        for name in mention_names:
+            lower = re.sub(rf"@?{re.escape(name.lower())}\b", "", lower)
+    # Remove punctuation
+    cleaned = re.sub(r"[^\w\s]", "", lower).strip()
+    if not cleaned:
+        return False
+    if cleaned in TERMINAL_ACKNOWLEDGMENT_PATTERNS:
+        return True
+    words = cleaned.split()
+    if len(words) <= 4 and any(p in cleaned for p in ["thank you", "thanks", "got it", "noted", "all good", "understood"]):
+        return True
     return False
 
 def _is_addressed_at_start(plain_text: str, rich_text: List[Dict[str, Any]], names: List[str], bot_user_id: str) -> bool:
@@ -173,7 +202,20 @@ def evaluate_comment(
             text=full_text
         )
 
-    # 3. Check if another user/bot is addressed at start
+    # 3. Terminal acknowledgment guard: Gratitude / Acknowledgment without request closes turn
+    if is_terminal_acknowledgment(full_text, settings.mention_names):
+        return RoutedComment(
+            actionable=False,
+            reason="terminal_acknowledgment",
+            comment_id=comment_id,
+            discussion_id=discussion_id,
+            parent_id=parent_id,
+            author_id=author_id,
+            author_name=author_name,
+            text=full_text
+        )
+
+    # 4. Check if another user/bot is addressed at start
     if _other_addressed_at_start(full_text, rich_text, settings.mention_names, settings.bot_user_id):
         return RoutedComment(
             actionable=False,
@@ -186,7 +228,7 @@ def evaluate_comment(
             text=full_text
         )
 
-    # 4. Check if target bot is addressed at start
+    # 5. Check if target bot is addressed at start
     if _is_addressed_at_start(full_text, rich_text, settings.mention_names, settings.bot_user_id):
         return RoutedComment(
             actionable=True,
@@ -199,7 +241,7 @@ def evaluate_comment(
             text=full_text
         )
 
-    # 5. Check if target bot is mentioned in middle (topic only, not addressed)
+    # 6. Check if target bot is mentioned in middle (topic only, not addressed)
     bot_names = [n.lower() for n in settings.mention_names]
     lower_full = full_text.lower()
     has_mention_in_middle = any(f"@{bn}" in lower_full for bn in bot_names) or any(f" {bn} " in f" {lower_full} " for bn in bot_names)
@@ -215,7 +257,7 @@ def evaluate_comment(
             text=full_text
         )
 
-    # 6. Check thread continuation: if this bot owns this discussion, keep answering
+    # 7. Check thread continuation: if this bot owns this discussion, keep answering
     if discussion_owner and discussion_owner.lower() == settings.profile.lower():
         return RoutedComment(
             actionable=True,
@@ -228,7 +270,7 @@ def evaluate_comment(
             text=full_text
         )
 
-    # 7. No user/bot addressed and not an existing thread for this bot
+    # 8. No user/bot addressed and not an existing thread for this bot
     return RoutedComment(
         actionable=False,
         reason="not_addressed",
