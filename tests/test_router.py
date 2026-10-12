@@ -32,16 +32,38 @@ def test_no_mention_is_actionable(settings):
     assert routed.actionable
     assert routed.reason == "no_user_addressed"
 
-def test_addressed_to_greta_text(settings):
+def test_addressed_to_greta_text_at_start(settings):
     comment = {
         "id": "c3",
         "discussion_id": "d1",
         "created_by": {"id": "user_human_999"},
-        "rich_text": [{"type": "text", "plain_text": "Hey @greta please review this"}]
+        "rich_text": [{"type": "text", "plain_text": "@greta please review this"}]
     }
     routed = evaluate_comment(comment, settings)
     assert routed.actionable
-    assert routed.reason == "addressed_to_greta"
+    assert routed.reason == "addressed_at_start"
+
+def test_addressed_to_greta_name_at_start(settings):
+    comment = {
+        "id": "c3b",
+        "discussion_id": "d1",
+        "created_by": {"id": "user_human_999"},
+        "rich_text": [{"type": "text", "plain_text": "Greta, please review this"}]
+    }
+    routed = evaluate_comment(comment, settings)
+    assert routed.actionable
+    assert routed.reason == "addressed_at_start"
+
+def test_greta_in_middle_is_topic_not_addressed(settings):
+    comment = {
+        "id": "c3c",
+        "discussion_id": "d1",
+        "created_by": {"id": "user_human_999"},
+        "rich_text": [{"type": "text", "plain_text": "I discussed this with Greta yesterday and she agreed."}]
+    }
+    routed = evaluate_comment(comment, settings)
+    assert not routed.actionable
+    assert routed.reason == "mentioned_as_topic_not_addressed"
 
 def test_addressed_to_greta_user_mention(settings):
     comment = {
@@ -59,9 +81,9 @@ def test_addressed_to_greta_user_mention(settings):
     }
     routed = evaluate_comment(comment, settings)
     assert routed.actionable
-    assert routed.reason == "addressed_to_greta"
+    assert routed.reason == "addressed_at_start"
 
-def test_addressed_to_other_user_ignored(settings):
+def test_addressed_to_other_user_at_start(settings):
     comment = {
         "id": "c5",
         "discussion_id": "d1",
