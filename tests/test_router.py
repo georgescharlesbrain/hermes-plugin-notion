@@ -21,6 +21,40 @@ def test_drop_self_comment(settings):
     assert not routed.actionable
     assert routed.reason == "authored_by_bot"
 
+def test_drop_any_bot_type(settings):
+    comment = {
+        "id": "c1b",
+        "discussion_id": "d1",
+        "created_by": {"id": "random_bot_999", "type": "bot"},
+        "rich_text": [{"type": "text", "plain_text": "Bot message"}]
+    }
+    routed = evaluate_comment(comment, settings)
+    assert not routed.actionable
+    assert routed.reason == "authored_by_bot"
+
+def test_drop_any_integration_display_type(settings):
+    comment = {
+        "id": "c1c",
+        "discussion_id": "d1",
+        "created_by": {"id": "some_user_id"},
+        "display_name": {"type": "integration", "resolved_name": "some integration"},
+        "rich_text": [{"type": "text", "plain_text": "Integration message"}]
+    }
+    routed = evaluate_comment(comment, settings)
+    assert not routed.actionable
+    assert routed.reason == "authored_by_bot"
+
+def test_drop_aroa_bot_author(settings):
+    comment = {
+        "id": "c1d",
+        "discussion_id": "d1",
+        "created_by": {"id": "3f71c0e1-80e8-8148-8d4a-002761fd23b7"},
+        "rich_text": [{"type": "text", "plain_text": "@greta answer please"}]
+    }
+    routed = evaluate_comment(comment, settings)
+    assert not routed.actionable
+    assert routed.reason == "authored_by_bot"
+
 def test_no_mention_is_actionable(settings):
     comment = {
         "id": "c2",

@@ -3,11 +3,16 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from .settings import NotionSettings
 
 logger = logging.getLogger(__name__)
+
+KNOWN_BOT_IDS: Set[str] = {
+    "3f71c0e1-80e8-81bb-8268-002765b23008",  # Greta integration bot
+    "3f71c0e1-80e8-8148-8d4a-002761fd23b7",  # Aroa integration bot
+}
 
 @dataclass
 class RoutedComment:
@@ -22,13 +27,29 @@ class RoutedComment:
     page_id: Optional[str] = None
     page_title: Optional[str] = None
 
+def is_bot_comment(comment: Dict[str, Any], settings: NotionSettings) -> bool:
+    """True when the comment was created by any bot, app or integration."""
+    author = comment.get("created_by", {})
+    author_id = author.get("id", "")
+    author_type = author.get("type", "")
+    display_type = comment.get("display_name", {}).get("type", "")
+
+    if author_type == "bot":
+        return True
+    if display_type == "integration":
+        return True
+    if author_id in KNOWN_BOT_IDS:
+        return True
+    if settings.bot_integration_id and author_id == settings.bot_integration_id:
+        return True
+    return False
+
 def _is_addressed_at_start(plain_text: str, rich_text: List[Dict[str, Any]], names: List[str], bot_user_id: str) -> bool:
     """True when the bot is addressed at the very beginning of the comment."""
     clean_text = plain_text.strip()
     lower_text = clean_text.lower()
     bot_names = [n.lower() for n in names]
 
-    # Check first rich_text item if it is a mention
     if rich_text:
         first_item = rich_text[0]
         if first_item.get("type") == "mention":
@@ -82,8 +103,8 @@ def evaluate_comment(comment: Dict[str, Any], settings: NotionSettings) -> Route
     author_id = author.get("id", "")
     author_name = comment.get("display_name", {}).get("resolved_name") or author.get("name") or "User"
 
-    # 1. Loop guard: ignore comments created by the bot
-    if author_id == settings.bot_integration_id:
+    # 1. Bulletproof Loop guard: drop ANY comment authored by any bot or integration
+    if is_bot_comment(comment, settings):
         return RoutedComment(
             actionable=False,
             reason="authored_by_bot",
