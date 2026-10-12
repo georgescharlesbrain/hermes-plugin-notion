@@ -41,6 +41,12 @@ def check_requirements() -> bool:
 def is_connected(adapter: Optional[BasePlatformAdapter] = None) -> bool:
     return bool(adapter and getattr(adapter, "_running", False))
 
+def _profile_from_path(path: str) -> str:
+    path_lower = path.lower()
+    if "aroa" in path_lower:
+        return "aroa"
+    return "greta"
+
 class NotionAdapter(BasePlatformAdapter):
     """Notion <-> Hermes: HMAC-verified comment webhooks, thread write-back."""
 
@@ -66,12 +72,16 @@ class NotionAdapter(BasePlatformAdapter):
             logger.error("[notion] aiohttp is not installed; cannot start webhook server.")
             return False
 
-        # Refresh settings token in case environment updated
         self.settings = NotionSettings.from_config(getattr(self.config, "extra", None))
 
         app = web.Application(client_max_size=MAX_BODY_BYTES)
+        # Support base and profile-specific paths
         app.router.add_post(self.settings.webhook_path, self._handle_webhook)
         app.router.add_get(self.settings.webhook_path, self._handle_health)
+        app.router.add_post("/webhooks/notion/greta", self._handle_webhook)
+        app.router.add_get("/webhooks/notion/greta", self._handle_health)
+        app.router.add_post("/webhooks/notion/aroa", self._handle_webhook)
+        app.router.add_get("/webhooks/notion/aroa", self._handle_health)
 
         from gateway.platforms.shared_ingress import bind_listener
 
@@ -80,7 +90,7 @@ class NotionAdapter(BasePlatformAdapter):
         )
         self._running = True
         logger.info(
-            "[notion] Listening on %s:%d%s for profile %s",
+            "[notion] Listening on %s:%d%s (multi-profile) for profile %s",
             self.settings.host,
             self.settings.port,
             self.settings.webhook_path,
@@ -137,13 +147,15 @@ class NotionAdapter(BasePlatformAdapter):
             return SendResult(success=False, error=str(exc))
 
     async def _handle_health(self, request: web.Request) -> web.Response:
-        return web.Response(text="Notion Webhook Listener is Active\n", status=200)
+        profile = _profile_from_path(request.path)
+        return web.Response(text=f"Notion Webhook Listener is Active for [{profile}]\n", status=200)
 
     async def _handle_webhook(self, request: web.Request) -> web.Response:
         if request.content_length is not None and request.content_length > MAX_BODY_BYTES:
             return web.json_response({"error": "payload too large"}, status=413)
 
         raw_body = await request.read()
+        profile = _profile_from_path(request.path)
 
         try:
             payload = json.loads(raw_body.decode("utf-8")) if raw_body else {}
@@ -153,22 +165,23 @@ class NotionAdapter(BasePlatformAdapter):
         # 1. Verification handshake handling
         if "verification_token" in payload:
             v_token = payload["verification_token"]
-            logger.info("[notion] Received verification handshake with token: %s", v_token)
-            await asyncio.to_thread(storage.save_verification_token, v_token)
-            self.settings.webhook_secret = v_token
+            logger.info("[notion] Received verification handshake for %s with token: %s", profile, v_token)
+            await asyncio.to_thread(storage.save_verification_token, v_token, profile, request.path)
             return web.json_response({"status": "received", "verification_token": v_token}, status=200)
 
         # 2. Signature verification
-        secret = self.settings.webhook_secret or await asyncio.to_thread(storage.get_verification_token)
+        secret = await asyncio.to_thread(storage.get_verification_token, profile) or self.settings.webhook_secret
         signature_header = request.headers.get("X-Notion-Signature") or request.headers.get("x-notion-signature")
 
         if secret and signature_header:
+            if signature_header.startswith("sha256="):
+                signature_header = signature_header[len("sha256="):]
             computed = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
             if not hmac.compare_digest(signature_header, computed):
-                logger.warning("[notion] Invalid X-Notion-Signature received")
+                logger.warning("[notion] Invalid X-Notion-Signature received for profile %s", profile)
                 return web.json_response({"error": "invalid signature"}, status=401)
         elif secret and not signature_header:
-            logger.warning("[notion] Missing X-Notion-Signature header on webhook request")
+            logger.warning("[notion] Missing X-Notion-Signature header on webhook request for profile %s", profile)
             return web.json_response({"error": "missing signature"}, status=401)
 
         # 3. Process actionable events
@@ -189,11 +202,11 @@ class NotionAdapter(BasePlatformAdapter):
             if ev_type.startswith("comment") or entity_type == "comment":
                 comment_id = entity_id
                 if comment_id:
-                    self._spawn(self._process_comment_id(comment_id))
+                    self._spawn(self._process_comment_id(comment_id, profile))
 
         return web.json_response({"status": "accepted"}, status=200)
 
-    async def _process_comment_id(self, comment_id: str) -> None:
+    async def _process_comment_id(self, comment_id: str, profile: str) -> None:
         token = self.settings.token
         if not token:
             logger.error("[notion] Cannot fetch comment %s: missing NOTION_API_TOKEN", comment_id)
@@ -222,7 +235,7 @@ class NotionAdapter(BasePlatformAdapter):
             thread_id=routed.discussion_id,
             role_authorized=True,
         )
-        source.profile = self.settings.profile
+        source.profile = profile
 
         text_prompt = (
             f"Notion comment from {routed.author_name}:\n\n"
@@ -240,7 +253,7 @@ class NotionAdapter(BasePlatformAdapter):
             metadata={
                 "discussion_id": routed.discussion_id,
                 "comment_id": routed.comment_id,
-                "notion_profile": self.settings.profile,
+                "notion_profile": profile,
             },
         )
         await self.handle_message(msg_event)
