@@ -1,0 +1,18 @@
+name: notion
+label: Notion
+version: 0.1.0
+description: "Notion integration: the notion gateway platform (comment webhooks in, one agent session per discussion thread), deterministic @greta mention routing, and thread write-back."
+author: georgescharlesbrain
+kind: standalone
+platforms:
+  - linux
+  - macos
+requires_env:
+  - name: NOTION_API_TOKEN
+    description: "Notion internal connection token for the agent"
+    prompt: "Notion connection token"
+    password: true
+provides_tools:
+  - notion_reply_comment
+  - notion_get_comments
+provides_hooks: []
