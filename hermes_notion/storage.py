@@ -44,3 +44,31 @@ def save_verification_token(token: str, profile: str = "greta", path_str: str = 
     path.write_text(json.dumps(data, indent=2))
     os.chmod(path, 0o600)
     logger.info("[notion] Saved verification token for %s to %s", profile, path.name)
+
+def discussions_path() -> Path:
+    return data_dir() / "discussions.json"
+
+def get_discussion_owner(discussion_id: str) -> Optional[str]:
+    if not discussion_id:
+        return None
+    path = discussions_path()
+    if path.exists():
+        try:
+            data = json.loads(path.read_text())
+            return data.get(discussion_id)
+        except Exception as exc:
+            logger.warning("[notion] Could not read %s: %s", path.name, exc)
+    return None
+
+def set_discussion_owner(discussion_id: str, bot_name: str) -> None:
+    if not discussion_id or not bot_name:
+        return
+    path = discussions_path()
+    try:
+        data = json.loads(path.read_text()) if path.exists() else {}
+    except Exception:
+        data = {}
+    data[discussion_id] = bot_name.lower()
+    path.write_text(json.dumps(data, indent=2))
+    os.chmod(path, 0o600)
+    logger.info("[notion] Saved discussion owner for %s -> %s", discussion_id, bot_name)

@@ -127,9 +127,11 @@ class NotionAdapter(BasePlatformAdapter):
             logger.warning("[notion] Cannot send comment reply: missing discussion_id in chat_id %s", chat_id)
             return SendResult(success=False, error="missing discussion_id")
 
-        token = self.settings.token
+        profile = meta.get("notion_profile") or self.settings.profile
+        profile_settings = NotionSettings.for_profile(profile)
+        token = profile_settings.token or self.settings.token
         if not token:
-            logger.error("[notion] Cannot post reply: missing NOTION_API_TOKEN")
+            logger.error("[notion] Cannot post reply: missing NOTION_API_TOKEN for profile %s", profile)
             return SendResult(success=False, error="missing NOTION_API_TOKEN")
 
         try:
@@ -207,9 +209,10 @@ class NotionAdapter(BasePlatformAdapter):
         return web.json_response({"status": "accepted"}, status=200)
 
     async def _process_comment_id(self, comment_id: str, profile: str) -> None:
-        token = self.settings.token
+        profile_settings = NotionSettings.for_profile(profile)
+        token = profile_settings.token or self.settings.token
         if not token:
-            logger.error("[notion] Cannot fetch comment %s: missing NOTION_API_TOKEN", comment_id)
+            logger.error("[notion] Cannot fetch comment %s: missing NOTION_API_TOKEN for profile %s", comment_id, profile)
             return
 
         try:
@@ -218,7 +221,14 @@ class NotionAdapter(BasePlatformAdapter):
             logger.warning("[notion] Failed to fetch comment %s from Notion API: %s", comment_id, exc)
             return
 
-        routed = router.evaluate_comment(comment_obj, self.settings)
+        discussion_id = comment_obj.get("discussion_id", "")
+        discussion_owner = await asyncio.to_thread(storage.get_discussion_owner, discussion_id)
+
+        routed = router.evaluate_comment(comment_obj, profile_settings, discussion_owner)
+
+        if routed.reason == "addressed_at_start":
+            await asyncio.to_thread(storage.set_discussion_owner, discussion_id, profile)
+
         if not routed.actionable:
             logger.info("[notion] Comment %s ignored (reason: %s)", comment_id, routed.reason)
             return

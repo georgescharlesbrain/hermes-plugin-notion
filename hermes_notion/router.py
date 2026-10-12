@@ -9,9 +9,28 @@ from .settings import NotionSettings
 
 logger = logging.getLogger(__name__)
 
-KNOWN_BOT_IDS: Set[str] = {
-    "3f71c0e1-80e8-81bb-8268-002765b23008",  # Greta integration bot
-    "3f71c0e1-80e8-8148-8d4a-002761fd23b7",  # Aroa integration bot
+KOEN_USER_ID = "a28331c7-f20f-48ea-8757-b6d3dd3e22fd"
+KOEN_EMAIL = "georges.charles.brain@gmail.com"
+
+AROA_BOT_ID = "3f71c0e1-80e8-8148-8d4a-002761fd23b7"
+GRETA_BOT_ID = "3f71c0e1-80e8-81bb-8268-002765b23008"
+
+QAREN_EMAILS: Set[str] = {"haelnerac@gmail.com", "qaren@ufahamu.xyz"}
+
+# Authorization registry: who is permitted to address each target bot
+ALLOWED_CALLERS: Dict[str, Dict[str, Any]] = {
+    "aroa": {
+        "user_ids": {KOEN_USER_ID},
+        "emails": {KOEN_EMAIL},
+        "names": {"gcb", "koen"},
+        "bot_ids": set(),  # No bots can address Aroa
+    },
+    "greta": {
+        "user_ids": {KOEN_USER_ID},
+        "emails": {KOEN_EMAIL}.union(QAREN_EMAILS),
+        "names": {"gcb", "koen", "qaren", "karen"},
+        "bot_ids": {AROA_BOT_ID},  # Aroa is permitted to address Greta
+    },
 }
 
 @dataclass
@@ -27,21 +46,38 @@ class RoutedComment:
     page_id: Optional[str] = None
     page_title: Optional[str] = None
 
-def is_bot_comment(comment: Dict[str, Any], settings: NotionSettings) -> bool:
-    """True when the comment was created by any bot, app or integration."""
+def is_author_authorized(comment: Dict[str, Any], target_bot: str) -> bool:
+    """Verify if the comment author is permitted to address the target bot."""
+    target = target_bot.lower()
+    rules = ALLOWED_CALLERS.get(target)
+    if not rules:
+        return False
+
     author = comment.get("created_by", {})
     author_id = author.get("id", "")
     author_type = author.get("type", "")
-    display_type = comment.get("display_name", {}).get("type", "")
+    author_email = (author.get("person", {}).get("email") or "").lower()
+    display = comment.get("display_name", {})
+    display_type = display.get("type", "")
+    resolved_name = (display.get("resolved_name") or author.get("name") or "").lower()
 
-    if author_type == "bot":
+    # Check bot authors
+    is_bot = (
+        author_type == "bot"
+        or display_type == "integration"
+        or author_id in {AROA_BOT_ID, GRETA_BOT_ID}
+    )
+    if is_bot:
+        return author_id in rules.get("bot_ids", set())
+
+    # Check human authors
+    if author_id in rules.get("user_ids", set()):
         return True
-    if display_type == "integration":
+    if author_email and author_email in rules.get("emails", set()):
         return True
-    if author_id in KNOWN_BOT_IDS:
+    if any(n in resolved_name for n in rules.get("names", set())):
         return True
-    if settings.bot_integration_id and author_id == settings.bot_integration_id:
-        return True
+
     return False
 
 def _is_addressed_at_start(plain_text: str, rich_text: List[Dict[str, Any]], names: List[str], bot_user_id: str) -> bool:
@@ -94,7 +130,11 @@ def _other_addressed_at_start(plain_text: str, rich_text: List[Dict[str, Any]], 
 
     return False
 
-def evaluate_comment(comment: Dict[str, Any], settings: NotionSettings) -> RoutedComment:
+def evaluate_comment(
+    comment: Dict[str, Any],
+    settings: NotionSettings,
+    discussion_owner: Optional[str] = None
+) -> RoutedComment:
     comment_id = comment.get("id", "")
     discussion_id = comment.get("discussion_id", "")
     parent = comment.get("parent", {})
@@ -103,11 +143,15 @@ def evaluate_comment(comment: Dict[str, Any], settings: NotionSettings) -> Route
     author_id = author.get("id", "")
     author_name = comment.get("display_name", {}).get("resolved_name") or author.get("name") or "User"
 
-    # 1. Bulletproof Loop guard: drop ANY comment authored by any bot or integration
-    if is_bot_comment(comment, settings):
+    rich_text = comment.get("rich_text", [])
+    full_text_parts = [item.get("plain_text", "") for item in rich_text]
+    full_text = "".join(full_text_parts).strip()
+
+    # 1. Loop guard: A bot NEVER answers a comment created by ITSELF
+    if author_id == settings.bot_integration_id:
         return RoutedComment(
             actionable=False,
-            reason="authored_by_bot",
+            reason="authored_by_target_bot",
             comment_id=comment_id,
             discussion_id=discussion_id,
             parent_id=parent_id,
@@ -116,11 +160,20 @@ def evaluate_comment(comment: Dict[str, Any], settings: NotionSettings) -> Route
             text=""
         )
 
-    rich_text = comment.get("rich_text", [])
-    full_text_parts = [item.get("plain_text", "") for item in rich_text]
-    full_text = "".join(full_text_parts).strip()
+    # 2. Authorization check: Is this author allowed to address this bot?
+    if not is_author_authorized(comment, settings.profile):
+        return RoutedComment(
+            actionable=False,
+            reason="author_not_authorized",
+            comment_id=comment_id,
+            discussion_id=discussion_id,
+            parent_id=parent_id,
+            author_id=author_id,
+            author_name=author_name,
+            text=full_text
+        )
 
-    # 2. Check if another user is addressed at start
+    # 3. Check if another user/bot is addressed at start
     if _other_addressed_at_start(full_text, rich_text, settings.mention_names, settings.bot_user_id):
         return RoutedComment(
             actionable=False,
@@ -133,7 +186,7 @@ def evaluate_comment(comment: Dict[str, Any], settings: NotionSettings) -> Route
             text=full_text
         )
 
-    # 3. Check if bot is addressed at start
+    # 4. Check if target bot is addressed at start
     if _is_addressed_at_start(full_text, rich_text, settings.mention_names, settings.bot_user_id):
         return RoutedComment(
             actionable=True,
@@ -146,7 +199,7 @@ def evaluate_comment(comment: Dict[str, Any], settings: NotionSettings) -> Route
             text=full_text
         )
 
-    # 4. Check if bot is mentioned somewhere in the middle (topic only, not addressed)
+    # 5. Check if target bot is mentioned in middle (topic only, not addressed)
     bot_names = [n.lower() for n in settings.mention_names]
     lower_full = full_text.lower()
     has_mention_in_middle = any(f"@{bn}" in lower_full for bn in bot_names) or any(f" {bn} " in f" {lower_full} " for bn in bot_names)
@@ -162,10 +215,23 @@ def evaluate_comment(comment: Dict[str, Any], settings: NotionSettings) -> Route
             text=full_text
         )
 
-    # 5. No user addressed -> default answering
+    # 6. Check thread continuation: if this bot owns this discussion, keep answering
+    if discussion_owner and discussion_owner.lower() == settings.profile.lower():
+        return RoutedComment(
+            actionable=True,
+            reason="thread_continuation",
+            comment_id=comment_id,
+            discussion_id=discussion_id,
+            parent_id=parent_id,
+            author_id=author_id,
+            author_name=author_name,
+            text=full_text
+        )
+
+    # 7. No user/bot addressed and not an existing thread for this bot
     return RoutedComment(
-        actionable=True,
-        reason="no_user_addressed",
+        actionable=False,
+        reason="not_addressed",
         comment_id=comment_id,
         discussion_id=discussion_id,
         parent_id=parent_id,
