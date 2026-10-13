@@ -1,6 +1,7 @@
 import asyncio
 import json
 import time
+import urllib.parse
 import pytest
 from hermes_notion import adapter, storage
 from hermes_notion.settings import NotionSettings
@@ -10,7 +11,11 @@ class Request:
     def __init__(self, payload, path="/webhooks/notion/aroa", headers=None):
         self.body = json.dumps(payload).encode()
         self.content_length = len(self.body)
+        query = ""
+        if "?" in path:
+            path, query = path.split("?", 1)
         self.path = path
+        self.query = dict(urllib.parse.parse_qsl(query))
         self.headers = headers or {}
 
     async def read(self):
@@ -195,3 +200,32 @@ def test_expired_registered_subscription_ticket_refused(monkeypatch, tmp_path):
     res = asyncio.run(instance("aroa")._handle_webhook(req))
     assert res.status == 403
     assert storage.get_verification_token("aroa") is None
+
+
+def test_notion_handshake_carries_only_the_token_and_our_ticket_in_the_url(monkeypatch, tmp_path):
+    """Notion's real verification POST has one field, verification_token, and no
+    subscription id. The operator's ticket rides in the endpoint URL instead."""
+    monkeypatch.setattr(storage, "data_dir", lambda: tmp_path)
+    ticket = storage.create_provisioning_ticket(profile="aroa", subscription_id="", ttl_seconds=3600)
+    req = Request(
+        {"verification_token": "notion-handshake-token"},
+        path=f"/webhooks/notion/aroa?provision_ticket={ticket['ticket_id']}",
+    )
+    res = asyncio.run(instance("aroa")._handle_webhook(req))
+    assert res.status == 200
+    assert storage.get_verification_token("aroa") == "notion-handshake-token"
+
+
+def test_url_ticket_is_single_use(monkeypatch, tmp_path):
+    monkeypatch.setattr(storage, "data_dir", lambda: tmp_path)
+    ticket = storage.create_provisioning_ticket(
+        profile="aroa", subscription_id="", ttl_seconds=3600, allow_replacement=True
+    )
+    path = f"/webhooks/notion/aroa?provision_ticket={ticket['ticket_id']}"
+    first = Request({"verification_token": "first"}, path=path)
+    assert asyncio.run(instance("aroa")._handle_webhook(first)).status == 200
+
+    replay = Request({"verification_token": "second"}, path=path)
+    res = asyncio.run(instance("aroa")._handle_webhook(replay))
+    assert res.status == 403
+    assert storage.get_verification_token("aroa") == "first"

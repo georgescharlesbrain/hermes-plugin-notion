@@ -159,7 +159,7 @@ def claim_provisioning_ticket(
                 return False, "provisioning ticket expired", None
             if row["profile"] != profile:
                 return False, "ticket profile mismatch", None
-            if row["subscription_id"] != subscription_id:
+            if subscription_id and row["subscription_id"] and row["subscription_id"] != subscription_id:
                 return False, "subscription mismatch", None
             # Check replacement policy
             if not row["allow_replacement"] and get_verification_token(profile) is not None:

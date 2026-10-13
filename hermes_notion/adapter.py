@@ -242,11 +242,13 @@ class NotionAdapter(BasePlatformAdapter):
 
         # 1. Verification handshake handling
         if "verification_token" in payload:
+            query = getattr(request, "query", None) or {}
             ticket_id = (
                 payload.get("provision_ticket")
                 or payload.get("ticket_id")
                 or request.headers.get("X-Hermes-Provision-Ticket")
                 or request.headers.get("X-Notion-Provision-Ticket")
+                or query.get("provision_ticket")
             )
             subscription_id = payload.get("subscription_id") or request.headers.get("X-Notion-Subscription-Id") or ""
             if ticket_id:
