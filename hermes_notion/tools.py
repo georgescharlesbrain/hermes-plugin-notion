@@ -1,84 +1,78 @@
-"""Notion tools for Hermes."""
-
+"""Profile-scoped Notion comment tools. Other MCP/CLI tools are outside this boundary."""
 from __future__ import annotations
 
-import logging
-import os
 from typing import Any, Dict
-
-from . import notion_client
-
-logger = logging.getLogger(__name__)
+from hermes_cli.config import load_config
+from . import notion_client, storage, policy
+from .settings import NotionSettings
 
 TOOLSET = "notion"
-
-SCHEMAS: Dict[str, Dict[str, Any]] = {
+SCHEMAS = {
     "notion_reply_comment": {
         "name": "notion_reply_comment",
-        "description": "Post a reply comment to an existing Notion discussion thread.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "discussion_id": {
-                    "type": "string",
-                    "description": "The Notion discussion UUID to reply to.",
-                },
-                "content": {
-                    "type": "string",
-                    "description": "The text content for the reply comment.",
-                },
-            },
-            "required": ["discussion_id", "content"],
-        },
-    },
+        "description": "Reply to a bound, permitted Notion discussion; verifies readback.",
+        "parameters": {"type": "object", "properties": {
+            "discussion_id": {"type": "string"}, "content": {"type": "string"}},
+            "required": ["discussion_id", "content"]}},
     "notion_get_comments": {
         "name": "notion_get_comments",
-        "description": "List comments attached to a Notion block or page.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "block_id": {
-                    "type": "string",
-                    "description": "The Notion block or page UUID.",
-                },
-            },
-            "required": ["block_id"],
-        },
-    },
+        "description": "List comments on a block/page within configured allowed roots.",
+        "parameters": {"type": "object", "properties": {"block_id": {"type": "string"}},
+                       "required": ["block_id"]}},
 }
 
-def check_requirements() -> bool:
-    token = os.getenv("NOTION_API_TOKEN") or os.getenv("NOTION_API_KEY")
-    return bool(token and token.strip())
+
+def _settings():
+    config = load_config()
+    extra = ((config.get("platforms") or {}).get("notion") or {})
+    return NotionSettings.from_config(extra.get("extra", extra))
+
 
 def _load_token() -> str:
-    token = os.getenv("NOTION_API_TOKEN") or os.getenv("NOTION_API_KEY") or ""
-    return token.strip()
+    return _settings().token.strip()
+
+
+def check_requirements() -> bool:
+    return bool(_load_token())
+
 
 def reply_comment(args: Dict[str, Any], **kw: Any) -> Dict[str, Any]:
+    settings = _settings()
     token = _load_token()
     if not token:
-        return {"ok": False, "error": "NOTION_API_TOKEN is not configured"}
+        return {"ok": False, "error": "notion_not_configured"}
     discussion_id = args.get("discussion_id", "")
     content = args.get("content", "")
+    if storage.get_discussion_owner(discussion_id) != settings.profile:
+        return {"ok": False, "error": "unbound_discussion"}
+    parent_id = storage.get_discussion_parent(discussion_id)
+    if not policy.in_scope(token, parent_id, settings.allowed_root_ids):
+        return {"ok": False, "error": "outside_allowed_roots"}
+    allowed, reason = storage.check_circuit_breaker(discussion_id)
+    if not allowed:
+        return {"ok": False, "error": reason}
     try:
         res = notion_client.create_comment_reply(token, discussion_id, content)
+        storage.record_bot_reply(discussion_id)
+        verified = notion_client.get_comment(token, res.get("id", ""))
+        if verified.get("discussion_id") != discussion_id:
+            return {"ok": False, "error": "reply_readback_mismatch"}
         return {"ok": True, "comment_id": res.get("id")}
-    except Exception as exc:
-        return {"ok": False, "error": str(exc)}
+    except Exception:
+        return {"ok": False, "error": "notion_request_failed"}
+
 
 def get_comments(args: Dict[str, Any], **kw: Any) -> Dict[str, Any]:
     token = _load_token()
     if not token:
-        return {"ok": False, "error": "NOTION_API_TOKEN is not configured"}
+        return {"ok": False, "error": "notion_not_configured"}
     block_id = args.get("block_id", "")
+    if not policy.in_scope(token, block_id, _settings().allowed_root_ids):
+        return {"ok": False, "error": "outside_allowed_roots"}
     try:
-        res = notion_client.get_comments_for_block(token, block_id)
-        return {"ok": True, "comments": res}
-    except Exception as exc:
-        return {"ok": False, "error": str(exc)}
+        return {"ok": True, "comments": notion_client.get_comments_for_block(token, block_id)}
+    except Exception:
+        return {"ok": False, "error": "notion_request_failed"}
 
-HANDLERS = {
-    "notion_reply_comment": reply_comment,
-    "notion_get_comments": get_comments,
-}
+
+HANDLERS = {"notion_reply_comment": reply_comment, "notion_get_comments": get_comments}

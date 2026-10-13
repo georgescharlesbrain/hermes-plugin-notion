@@ -39,18 +39,33 @@ def _request(token: str, path: str, method: str = "GET", data: Optional[Dict[str
             code = err_json.get("code", "")
         except Exception:
             msg, code = err_body, ""
-        logger.error("[notion] HTTP %d calling %s %s: %s", err.code, method, path, msg)
-        raise NotionClientError(err.code, msg, code) from err
-    except Exception as exc:
-        logger.error("[notion] Request failed calling %s %s: %s", method, path, exc)
-        raise
+        logger.error("[notion] HTTP request failed with status %d", err.code)
+        raise NotionClientError(err.code, "request_failed") from None
+    except Exception:
+        logger.error("[notion] Request failed")
+        raise NotionClientError(0, "request_failed") from None
 
 def get_comment(token: str, comment_id: str) -> Dict[str, Any]:
     return _request(token, f"/comments/{comment_id}", method="GET")
 
 def get_comments_for_block(token: str, block_id: str) -> List[Dict[str, Any]]:
-    res = _request(token, f"/comments?block_id={block_id}", method="GET")
-    return res.get("results", [])
+    from urllib.parse import urlencode
+    results = []
+    cursor = None
+    seen = set()
+    for _ in range(100):
+        params = {"block_id": block_id, "page_size": 100}
+        if cursor:
+            params["start_cursor"] = cursor
+        res = _request(token, "/comments?" + urlencode(params), method="GET")
+        results.extend(res.get("results", []))
+        if not res.get("has_more"):
+            return results
+        cursor = res.get("next_cursor")
+        if not cursor or cursor in seen:
+            raise NotionClientError(502, "invalid pagination")
+        seen.add(cursor)
+    raise NotionClientError(502, "pagination budget exceeded")
 
 def get_page(token: str, page_id: str) -> Dict[str, Any]:
     return _request(token, f"/pages/{page_id}", method="GET")

@@ -15,6 +15,7 @@ def greta_settings():
         profile="greta",
         bot_integration_id=GRETA_BOT_ID,
         bot_user_id="bot_user_greta_456",
+        allowed_user_ids=[KOEN_USER_ID],
         mention_names=["greta", "greta@ufahamu.xyz"],
     )
 
@@ -24,6 +25,7 @@ def aroa_settings():
         profile="aroa",
         bot_integration_id=AROA_BOT_ID,
         bot_user_id="bot_user_aroa_123",
+        allowed_user_ids=[KOEN_USER_ID],
         mention_names=["aroa", "aroa@ufahamu.xyz"],
     )
 
@@ -112,7 +114,7 @@ def test_drop_bot_addressing_aroa(aroa_settings):
     assert not routed.actionable
     assert routed.reason == "author_not_authorized"
 
-def test_allow_aroa_addressing_greta(greta_settings):
+def test_deny_aroa_addressing_greta(greta_settings):
     # Aroa bot is permitted to address Greta
     comment = {
         "id": "c5",
@@ -122,8 +124,8 @@ def test_allow_aroa_addressing_greta(greta_settings):
         "rich_text": [{"type": "text", "plain_text": "@greta please update the grocery list"}]
     }
     routed = evaluate_comment(comment, greta_settings)
-    assert routed.actionable
-    assert routed.reason == "addressed_at_start"
+    assert not routed.actionable
+    assert routed.reason == "author_not_authorized"
 
 def test_allow_koen_addressing_aroa(aroa_settings):
     comment = {
@@ -149,7 +151,7 @@ def test_allow_koen_addressing_greta(greta_settings):
     assert routed.actionable
     assert routed.reason == "addressed_at_start"
 
-def test_allow_qaren_email_addressing_greta(greta_settings):
+def test_deny_email_only_addressing_greta(greta_settings):
     comment = {
         "id": "c8",
         "discussion_id": "d1",
@@ -162,8 +164,8 @@ def test_allow_qaren_email_addressing_greta(greta_settings):
         "rich_text": [{"type": "text", "plain_text": "@greta dinner options for Friday"}]
     }
     routed = evaluate_comment(comment, greta_settings)
-    assert routed.actionable
-    assert routed.reason == "addressed_at_start"
+    assert not routed.actionable
+    assert routed.reason == "author_not_authorized"
 
 def test_addressed_to_greta_name_at_start(greta_settings):
     comment = {

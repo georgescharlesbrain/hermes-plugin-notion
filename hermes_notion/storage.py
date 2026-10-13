@@ -10,7 +10,8 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 def data_dir() -> Path:
-    home = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
+    from hermes_constants import get_hermes_home
+    home = get_hermes_home()
     target = home / "plugin-data" / "notion"
     target.mkdir(parents=True, exist_ok=True)
     return target
@@ -20,10 +21,8 @@ def secrets_path(profile: str = "greta") -> Path:
     return data_dir() / filename
 
 def get_verification_token(profile: str = "greta") -> Optional[str]:
-    env_var = "NOTION_WEBHOOK_SECRET" if profile == "greta" else f"NOTION_WEBHOOK_SECRET_{profile.upper()}"
-    env_val = os.getenv(env_var)
-    if env_val:
-        return env_val.strip()
+    # Environment secrets are captured by NotionSettings in the owning profile scope.
+    # This fallback reads only that profile's provisioned file, never process globals.
     path = secrets_path(profile)
     if path.exists():
         try:
@@ -76,38 +75,82 @@ def set_discussion_owner(discussion_id: str, bot_name: str) -> None:
     os.chmod(path, 0o600)
     logger.info("[notion] Saved discussion owner for %s -> %s", discussion_id, bot_name)
 
+def get_discussion_parent(discussion_id: str) -> Optional[str]:
+    path = data_dir() / "discussion_parents.json"
+    try:
+        return json.loads(path.read_text()).get(discussion_id)
+    except (OSError, ValueError):
+        return None
+
+
+def set_discussion_parent(discussion_id: str, parent_id: str) -> None:
+    path = data_dir() / "discussion_parents.json"
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        data = {}
+    data[discussion_id] = parent_id
+    path.write_text(json.dumps(data))
+    os.chmod(path, 0o600)
+
+
 # --- Idempotency / Deduplication Cache ---
 
 def dedup_path() -> Path:
     return data_dir() / "processed_comments.json"
 
+def _replay_connection():
+    import sqlite3
+    path = data_dir() / "replay.db"
+    db = sqlite3.connect(path, timeout=10)
+    os.chmod(path, 0o600)
+    db.execute("CREATE TABLE IF NOT EXISTS processed (comment_id TEXT PRIMARY KEY)")
+    return db
+
+
+def claim_comment(comment_id: str) -> bool:
+    """Atomic at-most-once claim across adapter instances/processes; never evict IDs."""
+    if not comment_id:
+        return False
+    if is_comment_processed(comment_id):
+        return False
+    db = _replay_connection()
+    try:
+        with db:
+            result = db.execute("INSERT OR IGNORE INTO processed VALUES (?)", (comment_id,))
+        return result.rowcount == 1
+    finally:
+        db.close()
+
+
 def is_comment_processed(comment_id: str) -> bool:
     if not comment_id:
         return False
+    db = _replay_connection()
+    try:
+        if db.execute("SELECT 1 FROM processed WHERE comment_id = ?", (comment_id,)).fetchone():
+            return True
+    finally:
+        db.close()
+    # Honor existing legacy state without deleting or rewriting it.
     path = dedup_path()
     if path.exists():
         try:
-            items = json.loads(path.read_text())
-            return comment_id in set(items)
-        except Exception:
-            return False
+            return comment_id in json.loads(path.read_text())
+        except (OSError, ValueError):
+            raise RuntimeError("invalid legacy replay state")
     return False
+
 
 def mark_comment_processed(comment_id: str) -> None:
     if not comment_id:
         return
-    path = dedup_path()
+    db = _replay_connection()
     try:
-        items = json.loads(path.read_text()) if path.exists() else []
-    except Exception:
-        items = []
-    if comment_id not in items:
-        items.append(comment_id)
-        # Retain last 1000 items to bound storage
-        if len(items) > 1000:
-            items = items[-1000:]
-        path.write_text(json.dumps(items, indent=2))
-        os.chmod(path, 0o600)
+        with db:
+            db.execute("INSERT OR IGNORE INTO processed VALUES (?)", (comment_id,))
+    finally:
+        db.close()
 
 # --- Circuit Breaker & Cooldown ---
 

@@ -15,29 +15,13 @@ KOEN_EMAIL = "georges.charles.brain@gmail.com"
 AROA_BOT_ID = "3f71c0e1-80e8-8148-8d4a-002761fd23b7"
 GRETA_BOT_ID = "3f71c0e1-80e8-81bb-8268-002765b23008"
 
-QAREN_EMAILS: Set[str] = {"haelnerac@gmail.com", "qaren@ufahamu.xyz"}
-
-# Authorization registry: who is permitted to address each target bot
-ALLOWED_CALLERS: Dict[str, Dict[str, Any]] = {
-    "aroa": {
-        "user_ids": {KOEN_USER_ID},
-        "emails": {KOEN_EMAIL},
-        "names": {"gcb", "koen"},
-        "bot_ids": set(),  # No bots can address Aroa
-    },
-    "greta": {
-        "user_ids": {KOEN_USER_ID},
-        "emails": {KOEN_EMAIL}.union(QAREN_EMAILS),
-        "names": {"gcb", "koen", "qaren", "karen"},
-        "bot_ids": {AROA_BOT_ID},  # Aroa is permitted to address Greta
-    },
-}
+# Historical IDs above support compatibility/tests only; no implicit caller grants.
 
 TERMINAL_ACKNOWLEDGMENT_PATTERNS: Set[str] = {
     "thank you", "thanks", "thx", "ty", "thank you very much", "thank you so much",
     "ok", "okay", "got it", "noted", "k", "cool", "great", "perfect", "done",
     "all good", "understood", "no problem", "youre welcome", "you are welcome",
-    "great thanks", "thanks a lot", "many thanks"
+    "great thanks", "thanks a lot", "many thanks", "perfect thank you"
 }
 
 @dataclass
@@ -53,39 +37,13 @@ class RoutedComment:
     page_id: Optional[str] = None
     page_title: Optional[str] = None
 
-def is_author_authorized(comment: Dict[str, Any], target_bot: str) -> bool:
-    """Verify if the comment author is permitted to address the target bot."""
-    target = target_bot.lower()
-    rules = ALLOWED_CALLERS.get(target)
-    if not rules:
-        return False
-
+def is_author_authorized(comment: Dict[str, Any], target_bot: str,
+                         allowed_user_ids: Optional[List[str]] = None) -> bool:
+    """Only configured immutable human IDs grant authority; names/emails/bots do not."""
     author = comment.get("created_by", {})
-    author_id = author.get("id", "")
-    author_type = author.get("type", "")
-    author_email = (author.get("person", {}).get("email") or "").lower()
-    display = comment.get("display_name", {})
-    display_type = display.get("type", "")
-    resolved_name = (display.get("resolved_name") or author.get("name") or "").lower()
-
-    # Check bot authors
-    is_bot = (
-        author_type == "bot"
-        or display_type == "integration"
-        or author_id in {AROA_BOT_ID, GRETA_BOT_ID}
-    )
-    if is_bot:
-        return author_id in rules.get("bot_ids", set())
-
-    # Check human authors
-    if author_id in rules.get("user_ids", set()):
-        return True
-    if author_email and author_email in rules.get("emails", set()):
-        return True
-    if any(n in resolved_name for n in rules.get("names", set())):
-        return True
-
-    return False
+    if author.get("type") == "bot" or comment.get("display_name", {}).get("type") == "integration":
+        return False
+    return bool(author.get("id") and author.get("id") in (allowed_user_ids or []))
 
 def is_terminal_acknowledgment(text: str, mention_names: Optional[List[str]] = None) -> bool:
     """True when text is solely an acknowledgment or gratitude with no instruction/question."""
@@ -104,9 +62,6 @@ def is_terminal_acknowledgment(text: str, mention_names: Optional[List[str]] = N
         return False
     if cleaned in TERMINAL_ACKNOWLEDGMENT_PATTERNS:
         return True
-    words = cleaned.split()
-    if len(words) <= 4 and any(p in cleaned for p in ["thank you", "thanks", "got it", "noted", "all good", "understood"]):
-        return True
     return False
 
 def _is_addressed_at_start(plain_text: str, rich_text: List[Dict[str, Any]], names: List[str], bot_user_id: str) -> bool:
@@ -124,7 +79,7 @@ def _is_addressed_at_start(plain_text: str, rich_text: List[Dict[str, Any]], nam
                 uid = user.get("id", "")
                 uname = (user.get("name") or "").lower()
                 uemail = (user.get("person", {}).get("email") or "").lower()
-                if (bot_user_id and uid == bot_user_id) or any(bn in uname for bn in bot_names) or any(bn in uemail for bn in bot_names):
+                if bool(bot_user_id and uid == bot_user_id):
                     return True
 
     for bn in bot_names:
@@ -148,7 +103,7 @@ def _other_addressed_at_start(plain_text: str, rich_text: List[Dict[str, Any]], 
                 uid = user.get("id", "")
                 uname = (user.get("name") or "").lower()
                 uemail = (user.get("person", {}).get("email") or "").lower()
-                is_our_bot = (bot_user_id and uid == bot_user_id) or any(bn in uname for bn in bot_names) or any(bn in uemail for bn in bot_names)
+                is_our_bot = bool(bot_user_id and uid == bot_user_id)
                 if not is_our_bot:
                     return True
 
@@ -176,8 +131,12 @@ def evaluate_comment(
     full_text_parts = [item.get("plain_text", "") for item in rich_text]
     full_text = "".join(full_text_parts).strip()
 
+    if not comment_id or not discussion_id or not author_id or not full_text:
+        return RoutedComment(False, "invalid_comment", comment_id, discussion_id,
+                             parent_id, author_id, author_name, full_text)
+
     # 1. Loop guard: A bot NEVER answers a comment created by ITSELF
-    if author_id == settings.bot_integration_id:
+    if author_id and author_id in {settings.bot_integration_id, settings.bot_user_id}:
         return RoutedComment(
             actionable=False,
             reason="authored_by_target_bot",
@@ -190,7 +149,7 @@ def evaluate_comment(
         )
 
     # 2. Authorization check: Is this author allowed to address this bot?
-    if not is_author_authorized(comment, settings.profile):
+    if not is_author_authorized(comment, settings.profile, settings.allowed_user_ids):
         return RoutedComment(
             actionable=False,
             reason="author_not_authorized",
@@ -201,6 +160,19 @@ def evaluate_comment(
             author_name=author_name,
             text=full_text
         )
+
+    stop_text = full_text.lower()
+    for name in sorted(settings.mention_names, key=len, reverse=True):
+        stop_text = re.sub(rf"^@?{re.escape(name.lower())}([:\s,!-]+|$)", "", stop_text)
+    if len(full_text) > 8192:
+        return RoutedComment(False, "request_budget_exceeded", comment_id, discussion_id,
+                             parent_id, author_id, author_name, "")
+    if re.match(r"^(fyi|status|update)\s*:", stop_text):
+        return RoutedComment(False, "non_actionable_update", comment_id, discussion_id,
+                             parent_id, author_id, author_name, full_text)
+    if stop_text.strip(" .!") in {"stop", "cancel", "pause"}:
+        return RoutedComment(False, "stop_requested", comment_id, discussion_id,
+                             parent_id, author_id, author_name, full_text)
 
     # 3. Terminal acknowledgment guard: Gratitude / Acknowledgment without request closes turn
     if is_terminal_acknowledgment(full_text, settings.mention_names):
