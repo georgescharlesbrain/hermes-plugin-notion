@@ -6,6 +6,33 @@ from typing import List, Optional
 from agent.secret_scope import get_secret
 from hermes_constants import get_hermes_home
 
+
+def _scoped_secret(name: str) -> str:
+    """Read a credential without raising when no profile secret scope is bound.
+
+    ``agent.secret_scope.get_secret`` raises ``UnscopedSecretError`` on the
+    multiplexed gateway when it runs outside a profile scope - which is exactly
+    where a platform ``check_fn`` and the default profile's adapter construction
+    run. ``gateway.platforms._shared.get_scoped_secret`` is the supported reader
+    for those sites: it falls back to this profile's own environment and, with
+    ``external_fallback``, to a one-shot build of the profile secret scope, so a
+    token that lives in the credentials file is still found at startup.
+    """
+    try:
+        from gateway.platforms._shared import get_scoped_secret
+    except Exception:  # pragma: no cover - older core without the helper
+        get_scoped_secret = None
+    if get_scoped_secret is not None:
+        try:
+            return get_scoped_secret(name, "", external_fallback=True) or ""
+        except Exception:
+            return ""
+    try:
+        return get_secret(name) or ""
+    except Exception:
+        return ""
+
+
 WEBHOOK_PATH = "/webhooks/notion"
 DEFAULT_HOST = "localhost"
 DEFAULT_PORT = 8646
@@ -59,8 +86,8 @@ class NotionSettings:
         allowed_roots = ["*"] if profile == "aroa" else list(GRETA_ALLOWED_ROOT_IDS)
         return cls(
             profile=profile,
-            token=get_secret(f"NOTION_API_TOKEN_{suffix}") or get_secret("NOTION_API_TOKEN") or "",
-            webhook_secret=get_secret(f"NOTION_WEBHOOK_SECRET_{suffix}") or get_secret("NOTION_WEBHOOK_SECRET") or "",
+            token=_scoped_secret(f"NOTION_API_TOKEN_{suffix}") or _scoped_secret("NOTION_API_TOKEN"),
+            webhook_secret=_scoped_secret(f"NOTION_WEBHOOK_SECRET_{suffix}") or _scoped_secret("NOTION_WEBHOOK_SECRET"),
             bot_integration_id=AROA_BOT_INTEGRATION_ID if profile == "aroa" else GRETA_BOT_INTEGRATION_ID,
             bot_user_id=AROA_BOT_USER_ID if profile == "aroa" else GRETA_BOT_USER_ID,
             allowed_user_ids=[KOEN_USER_ID],
