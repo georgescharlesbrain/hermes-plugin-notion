@@ -46,22 +46,21 @@ Prefix filters are explicit conventions, not an NLP classifier. The router canno
 
 32 pending events maximum, serialized dispatch, 1 MiB body, 8192 request characters, 4096 context characters and a 300-second awaited callback limit. A 3-second outgoing cooldown and 5 replies per discussion per minute trip a latched breaker. Comments are atomically claimed in local SQLite `replay.db` before callback dispatch, with no ID eviction. Legacy processed-comment JSON remains honored and is not rewritten. Corrupt legacy replay state raises instead of silently forgetting it.
 
-At-most-once execution trades recovery for safety: a crash after claiming requires a fresh human request. SQLite replay claims are transactional across processes; discussion ownership, parent bindings and reply counters remain legacy JSON and are not a cross-process transactional ledger. Run one active adapter process per profile. Do not treat the JSON cooldown as an atomic budget across multiple concurrent tool senders.
+At-most-once execution trades recovery for safety: a crash after claiming requires a fresh human request. SQLite stores discussion ownership, parents, stopped state, reply reservations and per-turn reply counts. Process-restart tests verify their persistence. Legacy JSON remains a compatibility fallback. Run one active adapter process per profile. An inbound eligibility check releases its temporary reservation; the actual send reserves and commits its own slot. Failed readback and policy refusals never trigger the gateway's plain-text resend fallback.
 
-The callback timeout is **not a verified downstream model/tool-call cap**. Hermes may queue work beyond callback return; cancelling a coroutine cannot undo completed writes or recall injected work. Per-turn tool budgets, durable reply reservations and revocation checks on downstream queue execution are separate follow-up work.
+The callback timeout is **not a verified downstream model-call cap**. A stopped discussion blocks subsequent comment reads and outgoing replies. It does not cancel an already-running model request. A reply permits at most two attempts per triggering comment. Normal gateway delivery passes that comment ID through reply_to; when custom author metadata is absent, the adapter retrieves the original comment and verifies its discussion and immutable human author before posting.
 
 ## Permission enforcement limits
 
 The plugin checks ancestry to an approved page/block root, up to 32 levels, refusing lookup failures. It applies this to incoming context, comment listing, and bound-discussion replies. A root-ID match is an operator grant; roots must be verified in the right workspace before configuration. The current ancestry helper uses block retrieval: unsupported database/data-source ancestry fails closed rather than broadening access.
 
-This does not wrap independent Notion MCP, direct HTTP/CLI, browser, terminal or generic page-creation tools. An automated turn with those tools can bypass plugin-root constraints. Rollout must select a restricted tool surface or add a host-wide Notion write gate before calling this a workspace permission system. No free-child-page role grant is enabled by this candidate.
+Notion-triggered turns request the notion toolset and the no_mcp sentinel. Hermes can automatically expose newly discovered plugin tools; a profile-scoped pre_tool_call hook therefore permits only notion_get_comments and rejects every other tool name during those turns. The gateway sends the final answer through the checked adapter. Independent desktop, CLI and other-platform sessions remain outside this automated-turn boundary. This is not a host-wide workspace permission system. No child-page creation, page editing or peer delegation is enabled for automated Notion comments.
 
 ## Residual hardening proposals
 
-1. Restricted automated-turn toolsets and a shared Notion mutation policy covering MCP and child-page roles.
-2. Operator-authenticated, time-bounded webhook pairing; public pairing stays disabled in this candidate.
-3. Validate connection bot/workspace identity read-only before startup; independently inspect subscription delivery/capabilities. Current `/users/me` REST identity was not probed.
-4. Durable SQLite discussion/reply ledger with atomic cooldown reservations, exact returned-content readback, revocation epoch and safe failed-dispatch recovery.
-5. Explicit ID format validation and modern Notion API-version compatibility coverage before migrating from `2022-06-28`.
+1. Exact reply-content readback, rather than discussion identity alone.
+2. A policy revision covering changes while an adapter is already running.
+3. Explicit downstream model cancellation and model-call budgets.
+4. Modern API migration beyond the current baseline.
 
-See [maintenance](maintenance.md) for safe rollout and rollback. No new subscriptions, credential setup or permissions are requested as part of this review.
+See [maintenance](maintenance.md) for rollout and subscription activation. Identity, listener health, a provisioned token and verified vendor delivery are separate checks.

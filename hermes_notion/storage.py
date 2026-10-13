@@ -472,7 +472,9 @@ def check_circuit_breaker(
     max_replies: int = 5,
     window_seconds: float = 60.0,
 ) -> Tuple[bool, str]:
-    allowed, reason, _ = reserve_reply_slot(discussion_id, cooldown_seconds, max_replies, window_seconds)
+    allowed, reason, reservation_id = reserve_reply_slot(discussion_id, cooldown_seconds, max_replies, window_seconds)
+    if reservation_id:
+        rollback_reply_reservation(reservation_id)
     return allowed, reason
 
 
@@ -517,6 +519,7 @@ def claim_turn_reply(turn_id: str, max_replies: int = 2) -> Tuple[bool, str]:
     db = _db_connection()
     try:
         with db:
+            db.execute("BEGIN IMMEDIATE")
             row = db.execute(
                 "SELECT reply_count FROM turn_replies WHERE turn_id = ?", (turn_id,)
             ).fetchone()

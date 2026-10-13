@@ -13,8 +13,9 @@ from __future__ import annotations
 
 def register(ctx) -> None:
     from pathlib import Path
-    from .hermes_notion import adapter, tools
+    from .hermes_notion import adapter, tools, guard
 
+    ctx.register_hook("pre_tool_call", guard.check)
     ctx.register_skill(
         name="agent-operations",
         path=Path(__file__).parent / "skills" / "agent-operations" / "SKILL.md",

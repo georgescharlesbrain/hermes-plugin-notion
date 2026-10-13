@@ -125,6 +125,16 @@ class NotionAdapter(BasePlatformAdapter):
     async def get_chat_info(self, chat_id: str) -> Dict[str, Any]:
         return {"name": chat_id, "type": "channel"}
 
+    def toolsets_for_source(self, source: Any) -> Optional[List[str]]:
+        """Disable ambient MCP tools; the tool hook blocks recovered plugin tools."""
+        if getattr(source, "platform", None) != self.platform:
+            return None
+        return ["notion", "no_mcp"]
+
+    def _send_retry_is_final(self, result: SendResult) -> bool:
+        """Never repost an ambiguous Notion write or retry a policy refusal."""
+        return not result.success
+
     @_owning_home
     async def send(
         self,
@@ -159,6 +169,19 @@ class NotionAdapter(BasePlatformAdapter):
             return SendResult(success=False, error="unbound_discussion")
 
         # Queue-time mutation gating & scope revalidation
+        comment_id = meta.get("comment_id") or reply_to
+        issuer_user_id = meta.get("author_id")
+        if comment_id:
+            try:
+                original = await asyncio.to_thread(notion_client.get_comment, self.settings.token, comment_id)
+            except Exception:
+                return SendResult(success=False, error="request_author_unverified")
+            if original.get("discussion_id") != discussion_id:
+                return SendResult(success=False, error="request_discussion_mismatch")
+            issuer_user_id = (original.get("created_by") or {}).get("id")
+            if not issuer_user_id:
+                return SendResult(success=False, error="request_author_unverified")
+
         gate = policy.check_mutation_gate(
             profile=self.settings.profile,
             token=self.settings.token,
@@ -166,13 +189,12 @@ class NotionAdapter(BasePlatformAdapter):
             operation="reply_comment",
             allowed_root_ids=self.settings.allowed_root_ids,
             allowed_user_ids=self.settings.allowed_user_ids,
-            issuer_user_id=meta.get("author_id"),
+            issuer_user_id=issuer_user_id,
         )
         if not gate.allowed:
             return SendResult(success=False, error=gate.reason)
 
         # Per-turn reply budget check
-        comment_id = meta.get("comment_id")
         if comment_id:
             turn_ok, turn_reason = await asyncio.to_thread(storage.claim_turn_reply, comment_id, 2)
             if not turn_ok:
@@ -209,8 +231,8 @@ class NotionAdapter(BasePlatformAdapter):
             verified = await asyncio.to_thread(notion_client.get_comment, token, reply_comment_id)
             if verified.get("discussion_id") != discussion_id:
                 return SendResult(success=False, error="reply_readback_mismatch")
-            if meta.get("comment_id"):
-                await asyncio.to_thread(storage.mark_comment_processed, meta["comment_id"])
+            if comment_id:
+                await asyncio.to_thread(storage.mark_comment_processed, comment_id)
 
             return SendResult(success=True, message_id=reply_comment_id)
         except Exception as exc:
@@ -440,6 +462,7 @@ class NotionAdapter(BasePlatformAdapter):
                 "discussion_id": routed.discussion_id,
                 "comment_id": routed.comment_id,
                 "notion_profile": profile,
+                "author_id": routed.author_id,
             },
         )
         # At-most-once dispatch: ambiguous failures require explicit human re-addressing.
