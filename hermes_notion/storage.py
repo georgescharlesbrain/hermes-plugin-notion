@@ -172,6 +172,36 @@ def claim_provisioning_ticket(
         db.close()
 
 
+def claim_provisioning_ticket_for_subscription(
+    profile: str,
+    subscription_id: str,
+) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
+    """Claim the newest open ticket that matches this profile and subscription.
+
+    Notion's verification request cannot carry our ticket id, so the operator
+    registers the ticket first and this lookup binds it by (profile, subscription).
+    The single-use claim stays atomic in :func:`claim_provisioning_ticket`, so a
+    replayed handshake cannot consume a second ticket.
+    """
+    if not subscription_id:
+        return False, "missing subscription_id", None
+    db = _db_connection()
+    try:
+        row = db.execute(
+            """
+            SELECT ticket_id FROM provisioning_tickets
+            WHERE profile = ? AND subscription_id = ? AND consumed = 0 AND expires_at >= ?
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            (profile, subscription_id, time.time()),
+        ).fetchone()
+    finally:
+        db.close()
+    if not row:
+        return False, "no open provisioning ticket for this subscription", None
+    return claim_provisioning_ticket(row["ticket_id"], profile, subscription_id)
+
+
 # --- Durable Discussion Ownership & Parent Tracking ---
 
 def discussions_path() -> Path:

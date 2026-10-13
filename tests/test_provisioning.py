@@ -136,3 +136,62 @@ def test_provisioning_replacement_denied(monkeypatch, tmp_path):
     assert res.status == 403
     assert "replacement" in json.loads(res.text)["error"].lower()
     assert storage.get_verification_token("aroa") == "initial-valid-secret"
+
+
+def test_handshake_without_our_ticket_binds_a_registered_subscription(monkeypatch, tmp_path):
+    """Notion's own verification request carries no ticket id: the operator's
+    pre-registered ticket for that (profile, subscription) is the authority."""
+    monkeypatch.setattr(storage, "data_dir", lambda: tmp_path)
+    storage.create_provisioning_ticket(profile="aroa", subscription_id="sub-777", ttl_seconds=300)
+    req = Request(
+        {"verification_token": "secret-from-notion", "subscription_id": "sub-777"},
+        path="/webhooks/notion/aroa",
+    )
+    res = asyncio.run(instance("aroa")._handle_webhook(req))
+    assert res.status == 200
+    assert storage.get_verification_token("aroa") == "secret-from-notion"
+
+
+def test_handshake_with_unregistered_subscription_still_refused(monkeypatch, tmp_path):
+    monkeypatch.setattr(storage, "data_dir", lambda: tmp_path)
+    storage.create_provisioning_ticket(profile="aroa", subscription_id="sub-777", ttl_seconds=300)
+    req = Request(
+        {"verification_token": "attacker-secret", "subscription_id": "sub-other"},
+        path="/webhooks/notion/aroa",
+    )
+    res = asyncio.run(instance("aroa")._handle_webhook(req))
+    assert res.status == 403
+    assert json.loads(res.text)["error"] == "operator provisioning required"
+    assert storage.get_verification_token("aroa") is None
+
+
+def test_registered_subscription_handshake_is_single_use(monkeypatch, tmp_path):
+    monkeypatch.setattr(storage, "data_dir", lambda: tmp_path)
+    storage.create_provisioning_ticket(
+        profile="aroa", subscription_id="sub-777", ttl_seconds=300, allow_replacement=True
+    )
+    first = Request(
+        {"verification_token": "first-secret", "subscription_id": "sub-777"},
+        path="/webhooks/notion/aroa",
+    )
+    assert asyncio.run(instance("aroa")._handle_webhook(first)).status == 200
+
+    replay = Request(
+        {"verification_token": "replay-secret", "subscription_id": "sub-777"},
+        path="/webhooks/notion/aroa",
+    )
+    res = asyncio.run(instance("aroa")._handle_webhook(replay))
+    assert res.status == 403
+    assert storage.get_verification_token("aroa") == "first-secret"
+
+
+def test_expired_registered_subscription_ticket_refused(monkeypatch, tmp_path):
+    monkeypatch.setattr(storage, "data_dir", lambda: tmp_path)
+    storage.create_provisioning_ticket(profile="aroa", subscription_id="sub-777", ttl_seconds=-10)
+    req = Request(
+        {"verification_token": "late-secret", "subscription_id": "sub-777"},
+        path="/webhooks/notion/aroa",
+    )
+    res = asyncio.run(instance("aroa")._handle_webhook(req))
+    assert res.status == 403
+    assert storage.get_verification_token("aroa") is None

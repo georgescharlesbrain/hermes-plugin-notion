@@ -248,12 +248,20 @@ class NotionAdapter(BasePlatformAdapter):
                 or request.headers.get("X-Hermes-Provision-Ticket")
                 or request.headers.get("X-Notion-Provision-Ticket")
             )
-            if not ticket_id:
-                return web.json_response({"error": "operator provisioning required"}, status=403)
             subscription_id = payload.get("subscription_id") or request.headers.get("X-Notion-Subscription-Id") or ""
-            claimed, reason, _ = await asyncio.to_thread(
-                storage.claim_provisioning_ticket, ticket_id, profile, subscription_id
-            )
+            if ticket_id:
+                claimed, reason, _ = await asyncio.to_thread(
+                    storage.claim_provisioning_ticket, ticket_id, profile, subscription_id
+                )
+            else:
+                # Notion's own verification request cannot carry our ticket id: the
+                # operator registers the ticket first and the (profile, subscription)
+                # pair binds it. The claim stays single-use and expiring.
+                claimed, reason, _ = await asyncio.to_thread(
+                    storage.claim_provisioning_ticket_for_subscription, profile, subscription_id
+                )
+                if not claimed:
+                    return web.json_response({"error": "operator provisioning required"}, status=403)
             if not claimed:
                 return web.json_response({"error": reason}, status=403)
             await asyncio.to_thread(
