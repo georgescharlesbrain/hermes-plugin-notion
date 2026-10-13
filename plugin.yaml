@@ -5,8 +5,7 @@ description: "Notion integration: the notion gateway platform (comment webhooks 
 author: georgescharlesbrain
 kind: standalone
 platforms:
-  - linux
-  - macos
+  - notion
 requires_env:
   - name: NOTION_API_TOKEN
     description: "Notion internal connection token for the agent"
