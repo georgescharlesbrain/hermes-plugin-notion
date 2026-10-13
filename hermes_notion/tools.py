@@ -46,8 +46,21 @@ def reply_comment(args: Dict[str, Any], **kw: Any) -> Dict[str, Any]:
     if storage.get_discussion_owner(discussion_id) != settings.profile:
         return {"ok": False, "error": "unbound_discussion"}
     parent_id = storage.get_discussion_parent(discussion_id)
-    if not policy.in_scope(token, parent_id, settings.allowed_root_ids):
-        return {"ok": False, "error": "outside_allowed_roots"}
+    if not parent_id:
+        return {"ok": False, "error": "unbound_discussion"}
+
+    gate = policy.check_mutation_gate(
+        profile=settings.profile,
+        token=token,
+        target_id=parent_id,
+        operation="reply_comment",
+        allowed_root_ids=settings.allowed_root_ids,
+        allowed_user_ids=settings.allowed_user_ids,
+        issuer_user_id=kw.get("issuer_user_id"),
+    )
+    if not gate.allowed:
+        return {"ok": False, "error": gate.reason}
+
     allowed, reason = storage.check_circuit_breaker(discussion_id)
     if not allowed:
         return {"ok": False, "error": reason}
@@ -67,7 +80,8 @@ def get_comments(args: Dict[str, Any], **kw: Any) -> Dict[str, Any]:
     if not token:
         return {"ok": False, "error": "notion_not_configured"}
     block_id = args.get("block_id", "")
-    if not policy.in_scope(token, block_id, _settings().allowed_root_ids):
+    settings = _settings()
+    if not policy.in_scope(token, block_id, settings.allowed_root_ids, profile=settings.profile):
         return {"ok": False, "error": "outside_allowed_roots"}
     try:
         return {"ok": True, "comments": notion_client.get_comments_for_block(token, block_id)}

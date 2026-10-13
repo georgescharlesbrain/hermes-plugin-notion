@@ -1,6 +1,6 @@
 # Notion integration maintenance
 
-Read [security and routing](security-routing.md) before rollout. This guide mirrors the Asana plugin's separation of shared implementation, profile-local settings/state, operations and collaboration policy; it does not claim Asana's CLI, assignment or handoff capabilities exist here.
+Read [security and routing](security-routing.md) before rollout. This guide mirrors the Asana plugin's separation of shared implementation, profile-local settings/state, operations and collaboration policy.
 
 ## Inventory and connection checks
 
@@ -14,57 +14,33 @@ git -C /home/hermes/.hermes/plugins/notion log -1 --oneline
 ss -ltnp 'sport = :8646'
 ```
 
-Notion MCP `notion_get_self` is a read-only check of the MCP workspace/user. It does **not** verify the REST bot identity used by the comment listener. A listener health response proves only a route is responding, not that a real signed comment reaches the correct Hermes profile. Check subscriptions in Notion's integration settings without changing them during review.
+Notion MCP `notion_get_self` is a read-only check of the MCP workspace/user. It does **not** verify the REST bot identity used by the comment listener. A listener health response proves only a route is responding, not that a real signed comment reaches the correct Hermes profile.
 
 ## Shared-code upgrade (operator-approved only)
 
-1. Work in `/home/hermes/.agents/tmp/aroa-notion-<topic>`, not the installed checkout. Review a dedicated pushed branch; no PR is required for the review artifact.
-2. Run the complete plugin suite with the installed host venv and `git diff --check`. Record branch/commit and test result.
+1. Work in `/home/hermes/.agents/tmp/aroa-notion-impl`, not the installed checkout. Review a dedicated pushed branch (`fix/profile-safe-collaboration`).
+2. Run the complete plugin suite with the installed host venv (`/usr/local/lib/hermes-agent/venv/bin/python -m pytest tests -q`). Record branch/commit and test result.
 3. Inventory every profile symlink to the canonical repo and its local config. Preserve all unknown operational files and existing sessions/cron/memory.
-4. For each profile, back up config and `plugin-data/notion/` to an operator-controlled private location with restrictive permissions. Do not print backup contents. Record the installed commit and config revision.
-5. Decide an ingress routing plan: separate live adapters and ports, or a reviewed Hermes shared-ingress integration. Never route another profile's path to the default adapter as a fallback.
-6. Have the parent/operator approve and merge or cherry-pick the reviewed commit into the canonical branch. Update the installed checkout with a clean fast-forward; do not run destructive reset on unknown local files. Symlink users all receive this code upgrade, but none automatically receives trust, roots or new credentials.
-7. Migrate each profile's non-secret settings through `hermes config set`. Keep existing authentication. Missing verified grants mean deny, not invented defaults.
-8. Restart only after explicit rollout approval and saved task/session state. A gateway restart can terminate the reporting session; the parent/operator performs it, not the review subagent.
-9. Verify each profile independently using the checklist below. No live Notion writes until a human-approved test page/discussion is identified.
+4. For each profile, back up config and `plugin-data/notion/` to an operator-controlled private location with restrictive permissions. Do not print backup contents.
+5. Update installed checkout via clean fast-forward: `git -C /home/hermes/.hermes/plugins/notion pull --ff-only origin fix/profile-safe-collaboration`.
+6. Restart only after explicit rollout approval and saved task/session state. A gateway restart can terminate the reporting session; the parent/operator performs it.
 
-## Profile-local migration
+## Profile policy and identity configuration
 
-- Default home labels Aroa; named `greta` home labels Greta. No unknown-profile fallback. A foreign explicit `profile` label raises instead of choosing different credentials.
-- Put verified immutable human IDs in `allowed_user_ids`. Old code's hardcoded names/emails and Aroa-to-Greta bot grant are intentionally removed. Do not copy another profile's trust list.
-- Put only owner-approved page/block roots in `allowed_root_ids`. No family-role or page-root defaults are supplied.
-- Record verified `bot_integration_id` and, where available, `bot_user_id`. Do not mistake historical integration IDs for newly verified bot-user identities.
-- Maintain profile-specific `mention_names`, ingress route and local port. Generic ingress is local to the receiving adapter, not inherently Greta.
-- State remains under the active home: `plugin-data/notion/discussions.json`, `discussion_parents.json`, `circuit_breaker.json`, legacy processed-comment JSON, signing-secret compatibility files, and new `replay.db`.
-- SQLite replay state is additive: historical JSON is honored but not rewritten/deleted. IDs no longer expire at 1000 comments. Old discussion owners have no parent bindings; replies deny until a fresh permitted request establishes one.
-- Public handshake storage is removed. Existing provisioned signing material continues to work. Creating a new subscription requires a separately secured operator provisioning workflow; no credential reconfiguration is needed for existing authentication.
+- **Aroa**: Authorized by Koen (`a28331c7-f20f-48ea-8757-b6d3dd3e22fd`) with whole GCB workspace authority (`982fd186-4e7c-4435-ad62-bf23735bb30f`, bot ID `3f71c0e1-80e8-8148-8d4a-002761fd23b7`). Default `allowed_root_ids` resolves to `["*"]`.
+- **Greta**: Restricted connection (`3f71c0e1-80e8-81bb-8268-002765b23008`). Default `allowed_root_ids` resolves to her 4 verified roots: `3f71c0e1-80e8-8076-be25-f9cadd5041bd`, `3f71c0e1-80e8-8057-a55f-cea070b2f488`, `3f71c0e1-80e8-8106-9516-fb873d6e5ade`, `3f71c0e1-80e8-81ea-9ae3-db37ead313d8`. Wildcard grants are forbidden.
 
-## Verification after rollout
+## Authenticated expiring webhook provisioning
 
-1. Confirm installed commit, canonical symlink targets and no unexpected diff.
-2. Confirm each profile's plugin enablement, non-secret routing fields, intended empty/nonempty trust and root lists; never print credentials.
-3. Confirm the live listener and health route for **each** profile's configured port. Wrong-profile paths must be 404; bad signatures 401; absent signing material 503; handshake replacement 403.
-4. On an explicitly approved disposable discussion, have a configured human address one agent with a bounded question. Verify one turn, correct profile session, exact original `discussion_id`, and exact reply readback. Repeat for the other profile; the first profile must neither answer nor receive state writes.
-5. Verify FYI/status/ack, unknown author, own bot, peer bot, mid-sentence mention and duplicate-event cases do not execute. Do not forge production events or replay genuine events without test authorization.
-6. Check reply budgets and stopped continuation on disposable discussions. Verify future re-addressing deliberately reopens work. Record that active/queued turn cancellation is not guaranteed.
-7. Verify independent MCP/page tools are restricted before enabling automated mutation-capable turns. Plugin root checks alone are not a universal permission gate.
+1. **Generate ticket**: Operator issues short-lived provisioning ticket bound to profile and subscription ID:
+   `storage.create_provisioning_ticket(profile="aroa", subscription_id="sub-xxx", ttl_seconds=300, allow_replacement=False)`
+2. **Deliver secret**: Notion webhook handshake or operator presents `provision_ticket` alongside `verification_token`.
+3. **Validation**: Endpoint verifies ticket expiry, profile match, subscription match, and single-use claim atomically in SQLite.
+4. **Rollback**: If provisioning fails or must be rolled back, delete or restore `secrets_<profile>.json` and clear ticket state in `replay.db`.
 
-## Rollback
+## Supported API versions and ancestry compatibility
 
-Pause or disable ingress before rollback. Restore the recorded code revision through a reviewed revert or operator-approved checkout; restore settings through the configuration CLI. Preserve new replay SQLite state, parent bindings and unknown files. Do not delete newer replay claims merely to make old code run.
-
-**Security downgrade warning:** baseline `a20b231` accepts unsigned events without a secret, lets public handshakes replace secrets and authorizes display-name substrings. Do not expose that baseline publicly as a rollback strategy. Prefer reverting the feature with ingress disabled, or a security-only patch. Old code does not consult SQLite claims, so reopening baseline ingress can replay already-executed comments. Review/export a private replay migration before any old-version activation.
-
-## Cleanup candidates, not deletion orders
-
-The obsolete handover was removed after preserving its review evidence below. An unused path-selector helper and historical identity constants remain for compatibility/tests, not grants. Legacy JSON and provisioned signing files may contain necessary state: archive only after verified migration, never delete from this review. No temporary runner was found listening on 8646 during review.
-
-## Preserved review evidence
-
-Baseline `main` at `a20b231` had 27 passing tests. Regression tests first reproduced display-name authorization, unsigned ingress, unauthenticated secret replacement, foreign-profile routing, unknown-profile fallback, process-global credential resolution and state-home leakage. Further red/green cycles cover scope refusal, stop/filter decisions, pagination, callback/pending budgets and durable replay claims; the reviewed security candidate `ad115a8` independently passed 61 tests. The bundled operating-guide registration adds a test that first failed because no skill was registered.
-
-The old handover was authored under the Aroa Git identity in baseline commit `a20b231` and was removed with Koen's approval. Its still-valid operational cautions are preserved here and in the separate guides; Git retains the original history. Do not reinstate its hardcoded caller-name policy, wrong Greta path or unverified running-listener claims.
-
-REST identities have now been independently verified through the approved per-profile credential loader and `ntn`, without exposing secrets. See the [README](../README.md) for precise identities and connection-visible scope. No workspace documentation was published. Existing authentication, scripts and state remain intact.
-
-Before enabling ingress: verify webhook integration IDs, signing readiness and subscriptions; identify immutable trusted humans; translate approved authority into supported page/block roots (Aroa has broad GCB authorization, Greta does not); solve or restrict independent mutation-tool access; then reload only after the parallel Asana work permits a shared restart. Profile-local routes/ports must be verified free of conflicts. A disabled staged configuration and installed source do not prove runtime activation or successful delivery.
+- Baseline API version is `2022-06-28`.
+- Modern ancestry resolution supports container types: `page_id`, `block_id`, `database_id`, `data_source_id`, and `workspace`.
+- Unrecognized container types or malformed identifiers fail closed immediately.
+- Migration limits: upgrading API version to `2025-09-03` requires preserving data source parent mapping.

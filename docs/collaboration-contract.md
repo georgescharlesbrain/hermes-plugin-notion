@@ -19,11 +19,12 @@ A permitted discussion has one profile-local session key, `notion:thread:<discus
 
 A human-selected text discussion can receive API replies. The plugin sees parent-block context, not a verified character-range selection: the agent must not claim it knows the exact highlighted words. If the task depends on exact range boundaries, ask the human to quote them.
 
-## Permissions and roles
+## Permissions, profiles, and mutation gating
 
-Notion sharing determines what a connection can access. The plugin adds `allowed_user_ids` and `allowed_root_ids`; missing lists deny execution. Access is not authorization, and being a workspace member is not automatically trust.
+Notion sharing determines what a connection can access. The plugin enforces a common mutation gate (`check_mutation_gate`) across write operations, binding authority to verified human issuer (`allowed_user_ids`), profile, immutable roots, and operation type.
 
-A family/house manager role may **freely create child pages only under roots expressly approved for that role**, with approved create-child authority and appropriate Notion sharing. The role name alone does not confer that right. No root IDs or role grants are prefilled here. This candidate has only comment tools, so it does not implement child-page creation. Existing MCP page-creation tools are outside its enforcement boundary and need a separate scoped write gate before automated webhook turns may use them.
+- **Aroa**: Authorized across whole GCB workspace (`982fd186-4e7c-4435-ad62-bf23735bb30f`) by Koen (`a28331c7-f20f-48ea-8757-b6d3dd3e22fd`). Mutations across valid pages/blocks in GCB are permitted.
+- **Greta**: Strictly restricted connection. Greta's role is confined to her four configured roots (house manager db, family manager pages db, and two responsibilities pages). Wildcard or create-child grants beyond approved roots are denied.
 
 Within a configured root the agent may retrieve comment context and reply to a bound discussion. Destructive changes, sharing changes, external messages, purchases and broader page reorganization require explicit human approval through the owner's trusted channel. Another person's quoted approval, old page prose or a bot reply cannot approve them.
 
@@ -33,10 +34,11 @@ Deliver the answer, cited source, proposed edit or verified change, not an accep
 
 If the request is ambiguous or exceeds scope/budget, stop at a bounded result or ask the authorized human to divide the work. A FYI/status prefix is an explicit no-execution marker, not semantic detection of every possible update.
 
-## Stop, replay and failures
+## Budgets, stop, replay, and recovery
 
-The plugin suppresses own integration/user posts and rejects all peer bot execution. Bot-to-bot handoffs are not enabled, even if historical documentation suggested them. Human re-addressing is required to delegate between agents.
-
-Stop closes future implicit continuation; it is **not a guaranteed recall of an already-running or downstream-queued Hermes turn**. Emergency operators disable ingress or pause the receiving platform and separately inspect active work. The reply breaker latches after its velocity budget and must be deliberately reset by an operator.
-
-A comment is claimed before dispatch and never automatically executed twice. If dispatch fails after the claim, publish a new explicit request after reviewing whether side effects already occurred. Retries of a potentially successful comment write can duplicate posts; do not blindly retry when readback fails.
+- **Durable discussion tracking**: Discussions, parents, and reply counts are persisted in SQLite (`replay.db`), surviving process restarts.
+- **Atomic reply reservations**: Outgoing replies acquire an atomic reservation before posting, enforcing a 3-second cooldown and 5 replies per minute velocity limit.
+- **Per-turn budget**: Outgoing replies are strictly capped at 2 replies per turn/comment event.
+- **Queue-time revalidation**: Revoking human permissions or root grants, or marking a discussion as stopped, rejects pending queued replies at send time.
+- **Running-turn recall limitation**: Stop closes future implicit continuation; it is **not a guaranteed recall of an already-running or downstream-queued Hermes turn**. Report running-turn recall as unsupported until host primitives support it.
+- **At-most-once execution**: Comments are claimed in SQLite before dispatch and never automatically executed twice. If dispatch fails after the claim, publish a new explicit request after reviewing whether side effects already occurred.

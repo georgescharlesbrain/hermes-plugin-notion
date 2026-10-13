@@ -133,7 +133,7 @@ class NotionAdapter(BasePlatformAdapter):
         reply_to: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
-        """Send agent response back to Notion comment thread."""
+        """Send agent response back to Notion comment thread with queue-time revalidation and atomic reservations."""
         meta = metadata or {}
         discussion_id = meta.get("discussion_id")
         if not discussion_id and chat_id.startswith("notion:thread:"):
@@ -143,49 +143,79 @@ class NotionAdapter(BasePlatformAdapter):
             logger.warning("[notion] Cannot send comment reply: missing discussion_id in chat_id %s", chat_id)
             return SendResult(success=False, error="missing discussion_id")
 
-        # Circuit breaker / Cooldown guard before posting reply
+        # Profile check
         if meta.get("notion_profile", self.settings.profile) != self.settings.profile:
             return SendResult(success=False, error="profile_mismatch")
-        if await asyncio.to_thread(storage.get_discussion_owner, discussion_id) != self.settings.profile:
-            return SendResult(success=False, error="unbound_discussion")
-        parent_id = await asyncio.to_thread(storage.get_discussion_parent, discussion_id)
-        if not await asyncio.to_thread(policy.in_scope, self.settings.token, parent_id, self.settings.allowed_root_ids):
-            return SendResult(success=False, error="outside_allowed_roots")
-        allowed, reason = await asyncio.to_thread(
-            storage.check_circuit_breaker, discussion_id, 3.0, 5, 60.0
-        )
-        if not allowed:
-            logger.warning("[notion] Circuit breaker blocked outgoing reply on %s: %s", discussion_id, reason)
-            return SendResult(success=False, error=reason)
 
-        profile = self.settings.profile
-        if meta.get("notion_profile", profile) != profile:
-            return SendResult(success=False, error="profile_mismatch")
+        # Queue-time discussion ownership & stop check
+        owner = await asyncio.to_thread(storage.get_discussion_owner, discussion_id)
+        if owner != self.settings.profile:
+            if owner == "stopped":
+                return SendResult(success=False, error="discussion_stopped")
+            return SendResult(success=False, error="unbound_discussion")
+
+        parent_id = await asyncio.to_thread(storage.get_discussion_parent, discussion_id)
+        if not parent_id:
+            return SendResult(success=False, error="unbound_discussion")
+
+        # Queue-time mutation gating & scope revalidation
+        gate = policy.check_mutation_gate(
+            profile=self.settings.profile,
+            token=self.settings.token,
+            target_id=parent_id,
+            operation="reply_comment",
+            allowed_root_ids=self.settings.allowed_root_ids,
+            allowed_user_ids=self.settings.allowed_user_ids,
+            issuer_user_id=meta.get("author_id"),
+        )
+        if not gate.allowed:
+            return SendResult(success=False, error=gate.reason)
+
+        # Per-turn reply budget check
+        comment_id = meta.get("comment_id")
+        if comment_id:
+            turn_ok, turn_reason = await asyncio.to_thread(storage.claim_turn_reply, comment_id, 2)
+            if not turn_ok:
+                return SendResult(success=False, error=turn_reason)
+
+        # Atomic reply reservation (cooldown & velocity breaker)
+        reserved, res_reason, reservation_id = await asyncio.to_thread(
+            storage.reserve_reply_slot, discussion_id, 3.0, 5, 60.0
+        )
+        if not reserved:
+            logger.warning("[notion] Circuit breaker blocked outgoing reply on %s: %s", discussion_id, res_reason)
+            return SendResult(success=False, error=res_reason)
+
         token = self.settings.token
         if not token:
-            logger.error("[notion] Cannot post reply: missing NOTION_API_TOKEN for profile %s", profile)
+            logger.error("[notion] Cannot post reply: missing NOTION_API_TOKEN for profile %s", self.settings.profile)
+            if reservation_id:
+                await asyncio.to_thread(storage.rollback_reply_reservation, reservation_id)
             return SendResult(success=False, error="missing NOTION_API_TOKEN")
 
         try:
-            logger.info("[notion] Posting reply to discussion %s (%d chars) as [%s]", discussion_id, len(content), profile)
+            logger.info("[notion] Posting reply to discussion %s (%d chars) as [%s]", discussion_id, len(content), self.settings.profile)
             res = await asyncio.to_thread(
                 notion_client.create_comment_reply,
                 token=token,
                 discussion_id=discussion_id,
                 content=content,
             )
-            comment_id = res.get("id")
+            reply_comment_id = res.get("id")
 
-            # Record timestamp for cooldown and velocity breaker
-            await asyncio.to_thread(storage.record_bot_reply, discussion_id)
-            verified = await asyncio.to_thread(notion_client.get_comment, token, comment_id)
+            # Commit atomic reservation
+            if reservation_id:
+                await asyncio.to_thread(storage.commit_reply_reservation, reservation_id)
+            verified = await asyncio.to_thread(notion_client.get_comment, token, reply_comment_id)
             if verified.get("discussion_id") != discussion_id:
                 return SendResult(success=False, error="reply_readback_mismatch")
             if meta.get("comment_id"):
                 await asyncio.to_thread(storage.mark_comment_processed, meta["comment_id"])
 
-            return SendResult(success=True, message_id=comment_id)
+            return SendResult(success=True, message_id=reply_comment_id)
         except Exception as exc:
+            if reservation_id:
+                await asyncio.to_thread(storage.rollback_reply_reservation, reservation_id)
             logger.warning("[notion] Comment reply failed")
             return SendResult(success=False, error="notion_request_failed")
 
@@ -212,8 +242,24 @@ class NotionAdapter(BasePlatformAdapter):
 
         # 1. Verification handshake handling
         if "verification_token" in payload:
-            # Pairing must be an operator-managed provisioning step, never public replacement.
-            return web.json_response({"error": "operator provisioning required"}, status=403)
+            ticket_id = (
+                payload.get("provision_ticket")
+                or payload.get("ticket_id")
+                or request.headers.get("X-Hermes-Provision-Ticket")
+                or request.headers.get("X-Notion-Provision-Ticket")
+            )
+            if not ticket_id:
+                return web.json_response({"error": "operator provisioning required"}, status=403)
+            subscription_id = payload.get("subscription_id") or request.headers.get("X-Notion-Subscription-Id") or ""
+            claimed, reason, _ = await asyncio.to_thread(
+                storage.claim_provisioning_ticket, ticket_id, profile, subscription_id
+            )
+            if not claimed:
+                return web.json_response({"error": reason}, status=403)
+            await asyncio.to_thread(
+                storage.save_verification_token, payload["verification_token"], profile=profile
+            )
+            return web.json_response({"status": "provisioned", "profile": profile}, status=200)
 
         # 2. Signature verification
         secret = await asyncio.to_thread(storage.get_verification_token, profile) or self.settings.webhook_secret
@@ -224,7 +270,7 @@ class NotionAdapter(BasePlatformAdapter):
 
         if secret and signature_header:
             if signature_header.startswith("sha256="):
-                signature_header = signature_header[len("sha256="):]
+                signature_header = signature_header[len("sha256="): ]
             computed = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
             if not hmac.compare_digest(signature_header, computed):
                 logger.warning("[notion] Invalid X-Notion-Signature received for profile %s", profile)
@@ -305,11 +351,20 @@ class NotionAdapter(BasePlatformAdapter):
 
         if not routed.actionable:
             logger.info("[notion] Comment %s ignored (reason: %s)", comment_id, routed.reason)
-            # Mark ignored comments as processed so they are not re-evaluated
             await asyncio.to_thread(storage.mark_comment_processed, comment_id)
             return
 
-        if not await asyncio.to_thread(policy.in_scope, token, routed.parent_id, self.settings.allowed_root_ids):
+        # Common mutation gate for comment ancestry / root check
+        gate = policy.check_mutation_gate(
+            profile=profile,
+            token=token,
+            target_id=routed.parent_id,
+            operation="reply_comment",
+            allowed_root_ids=self.settings.allowed_root_ids,
+            allowed_user_ids=self.settings.allowed_user_ids,
+            issuer_user_id=routed.author_id,
+        )
+        if not gate.allowed:
             return
         await asyncio.to_thread(storage.set_discussion_parent, discussion_id, routed.parent_id)
 
