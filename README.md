@@ -13,7 +13,7 @@ Notion comment collaboration for [Hermes Agent](https://github.com/NousResearch/
 - [Agent operating guide](docs/agent-operations.md)
 - [Security and deterministic routing](docs/security-routing.md)
 - [Upgrade, profile-local migration, rollback and verification](docs/maintenance.md)
-- [Historical handover / evidence](HANDOVER.md)
+- [Bundled operating skill](skills/agent-operations/SKILL.md), available as `notion:agent-operations` after plugin load.
 
 ## Notion is not Asana
 
@@ -53,14 +53,18 @@ Credential resolution uses Hermes' scoped-secret API. Profile-suffixed values pr
 
 8192 request characters; 4096 parent-block context characters; 1 MiB HTTP body; 32 pending events per adapter; serialized dispatch; 300-second **dispatch callback** timeout; 3-second reply cooldown; 5 replies per discussion per 60 seconds before a latched breaker. This is not a Hermes-wide model/tool-call spending cap: downstream queued work can outlive the callback. See the security guide for residual limits.
 
-## Verified host facts (2026-10-13)
+## Connection verification and installation boundary (2026-10-13)
 
-- Canonical checkout: `/home/hermes/.hermes/plugins/notion`, baseline `main` at `a20b231`.
-- Greta plugin symlink resolves to that checkout.
-- Default/Aroa `plugins.enabled` excludes Notion; Greta's includes it.
-- Neither inspected profile config has `platforms.notion` settings.
-- Default Notion MCP is enabled; its read-only identity is human GCB in workspace GCB. Greta's MCP is configured disabled. **MCP authorization is separate from this plugin's REST bot connection.** REST bot identity and webhook subscription status were not verified.
-- No local listener was present on port 8646; health request could not connect. Existing credentials were not displayed or changed. Candidate not deployed; no live Notion content mutated.
+- Shared canonical checkout: `/home/hermes/.hermes/plugins/notion`; Greta's `/home/hermes/.hermes/profiles/greta/plugins/notion` symlink resolves there. Baseline was `main` at `a20b231`. Controlled installation of the reviewed branch is separate from gateway reload; verify the exact installed SHA with Git before reporting active behavior.
+- Existing approved profile loaders plus `ntn api v1/users/me` independently authenticated both REST bots in workspace GCB (`982fd186-4e7c-4435-ad62-bf23735bb30f`). Aroa: `aroa | pa koen`, bot user `3f71c0e1-80e8-8148-8d4a-002761fd23b7`. Greta: `greta | family manager | house manager`, bot user `3f71c0e1-80e8-81bb-8268-002765b23008`.
+- Historical Greta identifier `3f7d872b-594c-8120-9081-000252622a03` resolves to a **person** (`greta@ufahamu.xyz`), not the REST integration bot. Do not grant that identity human authority merely because its type is person or configure it as the bot user.
+- Complete paginated search exposed 3537 unique objects to Aroa and four to Greta. These are connection-visible objects, **not a complete workspace inventory**. Exact retrieval verified Aroa can read Georges-Charles Brain, Private Second Brain and Aroa pages databases. Greta can read the house manager and family manager pages databases and their two responsibilities pages; retrieval of the three broader databases and Online Store failed under Greta's own credentials.
+- Koen explicitly authorized Aroa's whole-GCB access. That authorization does not imply every page is already shared, and does not enlarge Greta's existing Notion sharing or role.
+- Default Notion MCP is enabled; Greta's remains disabled. MCP's human OAuth identity is separate from the profile REST bots.
+- Profile-local ingress configuration is staged **disabled**, with verified bot-user IDs and empty human/root grants. The webhook integration-ID field remains blank until verified from subscription metadata rather than inferred from `users/me`. No webhook was enabled, subscribed, or re-provisioned; no gateway restart was performed. Default plugin enablement remains a separate activation step.
+- Credentials and existing script/auth/state were not changed. No Notion workspace content was created, updated or deleted. Human documentation belongs in this shared repository, not in Notion workspace pages.
+
+See [maintenance](docs/maintenance.md) for test-first review evidence and pending rollout gates.
 
 ## Tests
 

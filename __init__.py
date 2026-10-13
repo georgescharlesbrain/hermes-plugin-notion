@@ -12,8 +12,14 @@ from __future__ import annotations
 
 
 def register(ctx) -> None:
+    from pathlib import Path
     from .hermes_notion import adapter, tools
 
+    ctx.register_skill(
+        name="agent-operations",
+        path=Path(__file__).parent / "skills" / "agent-operations" / "SKILL.md",
+        description="Use when handling Notion comment collaboration.",
+    )
     adapter.plugin_context = ctx
     ctx.register_platform(
         name=adapter.PLATFORM_NAME,

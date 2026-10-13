@@ -57,4 +57,14 @@ Pause or disable ingress before rollback. Restore the recorded code revision thr
 
 ## Cleanup candidates, not deletion orders
 
-`HANDOVER.md` formerly described a temporary live runner and an incorrect Greta path; it is now superseded. An unused path-selector helper and historical identity constants remain for compatibility/tests, not grants. Legacy JSON and provisioned signing files may contain necessary state: archive only after verified migration, never delete from this review. No temporary runner was found listening on 8646 during review.
+The obsolete handover was removed after preserving its review evidence below. An unused path-selector helper and historical identity constants remain for compatibility/tests, not grants. Legacy JSON and provisioned signing files may contain necessary state: archive only after verified migration, never delete from this review. No temporary runner was found listening on 8646 during review.
+
+## Preserved review evidence
+
+Baseline `main` at `a20b231` had 27 passing tests. Regression tests first reproduced display-name authorization, unsigned ingress, unauthenticated secret replacement, foreign-profile routing, unknown-profile fallback, process-global credential resolution and state-home leakage. Further red/green cycles cover scope refusal, stop/filter decisions, pagination, callback/pending budgets and durable replay claims; the reviewed security candidate `ad115a8` independently passed 61 tests. The bundled operating-guide registration adds a test that first failed because no skill was registered.
+
+The old handover was authored under the Aroa Git identity in baseline commit `a20b231` and was removed with Koen's approval. Its still-valid operational cautions are preserved here and in the separate guides; Git retains the original history. Do not reinstate its hardcoded caller-name policy, wrong Greta path or unverified running-listener claims.
+
+REST identities have now been independently verified through the approved per-profile credential loader and `ntn`, without exposing secrets. See the [README](../README.md) for precise identities and connection-visible scope. No workspace documentation was published. Existing authentication, scripts and state remain intact.
+
+Before enabling ingress: verify webhook integration IDs, signing readiness and subscriptions; identify immutable trusted humans; translate approved authority into supported page/block roots (Aroa has broad GCB authorization, Greta does not); solve or restrict independent mutation-tool access; then reload only after the parallel Asana work permits a shared restart. Profile-local routes/ports must be verified free of conflicts. A disabled staged configuration and installed source do not prove runtime activation or successful delivery.
