@@ -16,11 +16,15 @@ def register(ctx) -> None:
     from .hermes_notion import adapter, tools, guard
 
     ctx.register_hook("pre_tool_call", guard.check)
-    ctx.register_skill(
-        name="agent-operations",
-        path=Path(__file__).parent / "skills" / "agent-operations" / "SKILL.md",
-        description="Use when handling Notion comment collaboration.",
-    )
+    for name, description in (
+        ("use", "Read Notion, edit approved pages, and answer comments."),
+        ("profile-setup", "Set up a profile connection and debug webhook delivery."),
+    ):
+        ctx.register_skill(
+            name=name,
+            path=Path(__file__).parent / "skills" / name / "SKILL.md",
+            description=description,
+        )
     adapter.plugin_context = ctx
     ctx.register_platform(
         name=adapter.PLATFORM_NAME,

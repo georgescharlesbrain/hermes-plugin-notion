@@ -15,13 +15,17 @@ def test_plugin_registers_bundled_operating_guide():
         spec.loader.exec_module(module)
         ctx = Mock()
         module.register(ctx)
-        ctx.register_skill.assert_called_once()
-        args, kwargs = ctx.register_skill.call_args
-        assert kwargs['name'] == 'agent-operations'
-        path = Path(kwargs['path'])
-        assert path == root / 'skills' / 'agent-operations' / 'SKILL.md'
-        assert path.is_file()
-        assert kwargs['description'] == 'Use when handling Notion comment collaboration.'
+        assert ctx.register_skill.call_count == 2
+        names = set()
+        for call in ctx.register_skill.call_args_list:
+            kwargs = call.kwargs
+            names.add(kwargs['name'])
+            path = Path(kwargs['path'])
+            assert path == root / 'skills' / kwargs['name'] / 'SKILL.md'
+            assert path.is_file()
+            assert len(kwargs['description']) <= 60
+            assert kwargs['description'].endswith('.')
+        assert names == {'use', 'profile-setup'}
     finally:
         for key in list(sys.modules):
             if key == name or key.startswith(name + '.'):

@@ -14,7 +14,8 @@ Notion comment collaboration for [Hermes Agent](https://github.com/NousResearch/
 - [Agent operating guide](docs/agent-operations.md)
 - [Security and deterministic routing](docs/security-routing.md)
 - [Upgrade, profile-local migration, rollback and verification](docs/maintenance.md)
-- [Bundled operating skill](skills/agent-operations/SKILL.md), available as `notion:agent-operations` after plugin load.
+- [Use Notion](skills/use/SKILL.md), available as `notion:use`: profile-scoped ntn workspace work and bounded comment collaboration.
+- [Set up a Hermes profile](skills/profile-setup/SKILL.md), available as `notion:profile-setup`: connections, webhooks, verification and maintenance.
 
 ## Notion is not Asana
 
