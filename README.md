@@ -2,7 +2,7 @@
 
 Notion comment collaboration for [Hermes Agent](https://github.com/NousResearch/hermes-agent).
 
-- **Gateway platform:** signed `comment.created` events are filtered without a model. Authorized addressed requests start turns in `notion:thread:<discussion_id>`; permitted follow-ups reuse the profile-local discussion session.
+- **Gateway platform:** signed `comment.created` events are filtered without a model. Authorized addressed requests start turns in `notion:page:<page_id>`; all discussions on a page reuse that profile-local page session. Discussion ownership and reply targets remain separate.
 - **Tools:** `notion_get_comments` and `notion_reply_comment`, restricted to approved page/block roots. Replies are read back from the exact discussion before success is reported.
 - **Shared code, local authority:** one canonical checkout serves Aroa and Greta through profile plugin symlinks. Credentials, trust, replay state and sessions are not shared.
 - **Fail closed:** no approved humans or roots means no execution; no signing secret means HTTP 503. Public handshake replacement is refused.

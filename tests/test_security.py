@@ -33,7 +33,7 @@ def instance():
     obj = object.__new__(adapter.NotionAdapter)
     obj.settings = NotionSettings(profile="greta")
     obj._background = set()
-    obj.build_source = lambda **kw: SimpleNamespace(**kw)
+    obj.build_source = lambda **kw: SimpleNamespace(profile="greta", **kw)
     obj._processing = asyncio.Lock()
     import hermes_constants
     obj._home = hermes_constants.get_hermes_home()
@@ -146,7 +146,7 @@ def test_adapter_dispatch_reuses_discussion_and_deduplicates(monkeypatch):
         await asyncio.gather(obj._process_comment_id("c1", "greta"), obj._process_comment_id("c1", "greta"))
     asyncio.run(run())
     assert len(received) == 1
-    assert received[0].source.chat_id == "notion:thread:d1"
+    assert received[0].source.chat_id == "notion:page:root"
     assert received[0].source.profile == "greta"
     assert not received[0].allow_gateway_control
 

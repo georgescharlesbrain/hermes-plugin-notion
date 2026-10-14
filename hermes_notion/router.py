@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set
 
-from .settings import NotionSettings
+from .settings import NotionSettings, AROA_MENTION_NAMES, GRETA_MENTION_NAMES
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +93,12 @@ def _other_addressed_at_start(plain_text: str, rich_text: List[Dict[str, Any]], 
     """True when another user/bot is explicitly addressed at the start."""
     clean_text = plain_text.strip()
     bot_names = [n.lower() for n in names]
+
+    for name in (*AROA_MENTION_NAMES, *GRETA_MENTION_NAMES):
+        if name.lower() not in bot_names and re.match(
+            rf"^@?{re.escape(name.lower())}([:\s,!-].*|$)", clean_text.lower()
+        ):
+            return True
 
     if rich_text:
         first_item = rich_text[0]

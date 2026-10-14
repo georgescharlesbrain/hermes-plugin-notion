@@ -1,7 +1,7 @@
 """Notion integration for Hermes.
 
 Registers:
-- the ``notion`` gateway platform: Notion comment webhooks in, one agent session per discussion thread (``hermes_notion.adapter``);
+- the ``notion`` gateway platform: Notion comment webhooks in, one profile-local agent session per page (``hermes_notion.adapter``);
 - the ``notion`` toolset: ``notion_reply_comment``, ``notion_get_comments``;
 - deterministic @greta mention routing and loop guard.
 

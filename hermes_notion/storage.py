@@ -70,6 +70,10 @@ def _db_connection() -> sqlite3.Connection:
                 tripped_at REAL
             )
         """)
+    with db:
+        db.execute("CREATE TABLE IF NOT EXISTS page_discussions (discussion_id TEXT PRIMARY KEY, page_id TEXT NOT NULL)")
+        db.execute("CREATE TABLE IF NOT EXISTS routing_events (discussion_id TEXT PRIMARY KEY, event_time REAL NOT NULL, comment_id TEXT NOT NULL)")
+        db.execute("CREATE TABLE IF NOT EXISTS comment_discussions (comment_id TEXT PRIMARY KEY, discussion_id TEXT NOT NULL)")
     return db
 
 
@@ -537,5 +541,76 @@ def claim_turn_reply(turn_id: str, max_replies: int = 2) -> Tuple[bool, str]:
                 (turn_id, now),
             )
             return True, "ok"
+    finally:
+        db.close()
+
+# Routing records stay in the current profile's replay.db.
+def get_discussion_page(discussion_id: str) -> Optional[str]:
+    db = _db_connection()
+    try:
+        row = db.execute("SELECT page_id FROM page_discussions WHERE discussion_id = ?", (discussion_id,)).fetchone()
+        return row["page_id"] if row else None
+    finally:
+        db.close()
+
+
+def set_discussion_page(discussion_id: str, page_id: str) -> None:
+    db = _db_connection()
+    try:
+        with db:
+            row = db.execute("SELECT page_id FROM page_discussions WHERE discussion_id = ?", (discussion_id,)).fetchone()
+            if row and row["page_id"] != page_id:
+                raise ValueError("discussion page binding changed")
+            db.execute("INSERT OR IGNORE INTO page_discussions VALUES (?, ?)", (discussion_id, page_id))
+    finally:
+        db.close()
+
+
+def assign_discussion_owner(discussion_id: str, owner: str, event_at: Optional[str], comment_id: str) -> bool:
+    """Order trusted observations locally, without opening other profiles."""
+    from datetime import datetime, timezone
+    try:
+        stamp = datetime.fromisoformat((event_at or "").replace("Z", "+00:00"))
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)
+        event_time = stamp.timestamp()
+    except (ValueError, TypeError):
+        event_time = time.time()
+    db = _db_connection()
+    try:
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute("SELECT event_time, comment_id FROM routing_events WHERE discussion_id = ?", (discussion_id,)).fetchone()
+        if row and (event_time, comment_id) <= (row["event_time"], row["comment_id"]):
+            db.rollback()
+            return get_discussion_owner(discussion_id) == owner
+        now = time.time()
+        db.execute("INSERT INTO routing_events VALUES (?, ?, ?) ON CONFLICT(discussion_id) DO UPDATE SET event_time=excluded.event_time, comment_id=excluded.comment_id",
+                   (discussion_id, event_time, comment_id))
+        db.execute("""INSERT INTO discussions (discussion_id, owner, stopped, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?) ON CONFLICT(discussion_id) DO UPDATE SET
+            owner=excluded.owner, stopped=excluded.stopped, updated_at=excluded.updated_at""",
+            (discussion_id, owner, int(owner == "stopped"), now, now))
+        db.commit()
+        return True
+    finally:
+        db.close()
+
+
+def bind_comment_discussion(comment_id: str, discussion_id: str) -> None:
+    db = _db_connection()
+    try:
+        with db:
+            db.execute("INSERT OR IGNORE INTO comment_discussions VALUES (?, ?)", (comment_id, discussion_id))
+    finally:
+        db.close()
+
+
+def comment_has_owned_discussion(comment_id: str, page_id: str, profile: str) -> bool:
+    db = _db_connection()
+    try:
+        return bool(db.execute("""SELECT 1 FROM comment_discussions c
+            JOIN page_discussions p USING(discussion_id) JOIN discussions d USING(discussion_id)
+            WHERE c.comment_id=? AND p.page_id=? AND d.owner=? AND d.stopped=0 LIMIT 1""",
+            (comment_id, page_id, profile)).fetchone())
     finally:
         db.close()
