@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from typing import Any, Dict
+import json
+from functools import wraps
 from hermes_cli.config import load_config
 from . import notion_client, storage, policy
 from .settings import NotionSettings
@@ -118,4 +120,16 @@ def ntn_command(args: Dict[str, Any], **kw: Any) -> Dict[str, Any]:
     return execute(args, _settings())
 
 
-HANDLERS = {"notion_reply_comment": reply_comment, "notion_get_comments": get_comments, "notion_ntn": ntn_command}
+def _json_handler(handler):
+    """Hermes accepts text or multimodal envelopes, never an ordinary dict."""
+    @wraps(handler)
+    def registered(args, **kwargs):
+        return json.dumps(handler(args, **kwargs), ensure_ascii=False)
+    return registered
+
+
+HANDLERS = {name: _json_handler(handler) for name, handler in {
+    "notion_reply_comment": reply_comment,
+    "notion_get_comments": get_comments,
+    "notion_ntn": ntn_command,
+}.items()}
