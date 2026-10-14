@@ -3,7 +3,7 @@
 Notion comment collaboration for [Hermes Agent](https://github.com/NousResearch/hermes-agent).
 
 - **Gateway platform:** signed `comment.created` events are filtered without a model. Authorized addressed requests start turns in `notion:page:<page_id>`; all discussions on a page reuse that profile-local page session. Discussion ownership and reply targets remain separate.
-- **Tools:** `notion_get_comments` and `notion_reply_comment`, restricted to approved page/block roots. Replies are read back from the exact discussion before success is reported.
+- **Tools:** `notion_ntn` executes profile-scoped NTN workspace commands for reads, edits and creation. `notion_get_comments` reads discussion context; `notion_reply_comment` remains a non-automated compatibility tool. The gateway owns receipt/final-reply delivery during comment turns.
 - **Shared code, local authority:** one canonical checkout serves Aroa and Greta through profile plugin symlinks. Credentials, trust, replay state and sessions are not shared.
 - **Fail closed:** no approved humans or roots means no execution; no signing secret means HTTP 503. Public handshake replacement is refused.
 
@@ -53,7 +53,7 @@ Credential resolution uses Hermes' scoped-secret API. Profile-suffixed values pr
 
 ## Fixed safety limits
 
-8192 request characters; 4096 parent-block context characters; 1 MiB HTTP body; 32 pending events per adapter; serialized dispatch; 300-second **dispatch callback** timeout; 3-second reply cooldown; 5 replies per discussion per 60 seconds before a latched breaker. This is not a Hermes-wide model/tool-call spending cap: downstream queued work can outlive the callback. See the security guide for residual limits.
+8192 request characters; 4096 parent-block context characters; complete earlier same-discussion comments within a 24000-character total (explicit overflow requires a full discussion read); 1 MiB HTTP body; 32 pending events per adapter; serial model turns; 300-second awaited callback limit; five new receipt comments per discussion per minute. Final receipt updates reuse the reserved comment; legacy new replies retain a three-second cooldown. NTN calls have a 120-second process timeout and bounded model-visible output. None of these guarantees cancellation of a model or CLI request already in progress.
 
 ## Connection verification and installation boundary (2026-10-13)
 

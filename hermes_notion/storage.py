@@ -74,8 +74,37 @@ def _db_connection() -> sqlite3.Connection:
         db.execute("CREATE TABLE IF NOT EXISTS page_discussions (discussion_id TEXT PRIMARY KEY, page_id TEXT NOT NULL)")
         db.execute("CREATE TABLE IF NOT EXISTS routing_events (discussion_id TEXT PRIMARY KEY, event_time REAL NOT NULL, comment_id TEXT NOT NULL)")
         db.execute("CREATE TABLE IF NOT EXISTS comment_discussions (comment_id TEXT PRIMARY KEY, discussion_id TEXT NOT NULL)")
+        db.execute("CREATE TABLE IF NOT EXISTS ntn_operations (digest TEXT PRIMARY KEY, result TEXT, trigger_id TEXT)")
+        if "trigger_id" not in {r[1] for r in db.execute("PRAGMA table_info(ntn_operations)")}:
+            db.execute("ALTER TABLE ntn_operations ADD COLUMN trigger_id TEXT")
         db.execute("CREATE TABLE IF NOT EXISTS acknowledgements (comment_id TEXT PRIMARY KEY, reply_id TEXT, finished INTEGER DEFAULT 0, final_attempt INTEGER DEFAULT 0)")
     return db
+
+
+def claim_ntn_operation(digest: str, trigger_id: Optional[str] = None) -> Optional[str]:
+    """None means claimed; empty string means a prior ambiguous attempt."""
+    db = _db_connection()
+    try:
+        with db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute("SELECT result FROM ntn_operations WHERE digest = ?", (digest,)).fetchone()
+            if existing:
+                return existing["result"] or ""
+            if trigger_id and db.execute("SELECT 1 FROM ntn_operations WHERE trigger_id = ? AND result IS NULL LIMIT 1", (trigger_id,)).fetchone():
+                return ""
+            db.execute("INSERT INTO ntn_operations (digest, result, trigger_id) VALUES (?, NULL, ?)", (digest, trigger_id))
+            return None
+    finally:
+        db.close()
+
+
+def finish_ntn_operation(digest: str, result: str) -> None:
+    db = _db_connection()
+    try:
+        with db:
+            db.execute("UPDATE ntn_operations SET result = ? WHERE digest = ?", (result, digest))
+    finally:
+        db.close()
 
 
 def save_acknowledgement(comment_id: str, reply_id: Optional[str]) -> None:
@@ -648,6 +677,15 @@ def bind_comment_discussion(comment_id: str, discussion_id: str) -> None:
     try:
         with db:
             db.execute("INSERT OR IGNORE INTO comment_discussions VALUES (?, ?)", (comment_id, discussion_id))
+    finally:
+        db.close()
+
+
+def get_comment_discussion(comment_id: str) -> Optional[str]:
+    db = _db_connection()
+    try:
+        row = db.execute("SELECT discussion_id FROM comment_discussions WHERE comment_id = ?", (comment_id,)).fetchone()
+        return row["discussion_id"] if row else None
     finally:
         db.close()
 

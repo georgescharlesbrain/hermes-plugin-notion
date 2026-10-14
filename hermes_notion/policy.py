@@ -79,7 +79,7 @@ def in_scope(token: str, target_id: str, root_ids: List[str], profile: str = "gr
         seen.add(current_id)
 
         try:
-            obj = notion_client.get_block(token, current_id)
+            obj = notion_client.get_container(token, current_id)
         except Exception:
             return False
 

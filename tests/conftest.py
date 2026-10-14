@@ -6,6 +6,9 @@ def no_network_receipts(monkeypatch):
     from hermes_notion import notion_client
     monkeypatch.setattr(notion_client, "create_acknowledgement", lambda **kw: {"id": "fixture-receipt"})
     monkeypatch.setattr(notion_client, "update_comment", lambda **kw: {"id": kw["comment_id"]})
+    from hermes_notion import adapter
+    monkeypatch.setattr(adapter, "_discussion_comments", lambda *a: [])
+    monkeypatch.setattr(adapter, "_page_title", lambda *a: "Fixture page")
 
 
 

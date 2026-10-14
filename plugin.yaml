@@ -14,5 +14,6 @@ requires_env:
 provides_tools:
   - notion_reply_comment
   - notion_get_comments
+  - notion_ntn
 provides_hooks:
   - pre_tool_call

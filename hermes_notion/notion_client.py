@@ -73,6 +73,22 @@ def get_page(token: str, page_id: str) -> Dict[str, Any]:
 def get_block(token: str, block_id: str) -> Dict[str, Any]:
     return _request(token, f"/blocks/{block_id}", method="GET")
 
+def get_container(token: str, identifier: str) -> Dict[str, Any]:
+    """Resolve modern page/database/data-source ancestry without a global API migration."""
+    try:
+        return get_block(token, identifier)
+    except NotionClientError as exc:
+        if exc.status != 404:
+            raise
+    for resource in ("pages", "databases", "data_sources"):
+        try:
+            return _request(token, f"/{resource}/{identifier}", version="2026-03-11")
+        except NotionClientError as exc:
+            if exc.status != 404:
+                raise
+    raise NotionClientError(404, "container_not_found")
+
+
 def extract_block_text(block: Dict[str, Any]) -> str:
     """Extract plain text content from a Notion block."""
     if not isinstance(block, dict):

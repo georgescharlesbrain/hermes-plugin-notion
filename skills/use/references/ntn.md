@@ -1,50 +1,60 @@
-# Profile-scoped ntn commands
+# Profile-scoped NTN workspace commands
 
-The ntn client is the workspace interface. The plugin's automated comment
-gateway still uses its own REST client. Do not confuse these paths.
+During automated Notion turns, use notion_ntn(args=[...], body={...}, stdin="...").
+This tool executes the installed NTN CLI without a shell, binds the active Hermes
+profile and keeps its credentials/cache/mutation ledger private. It supports api,
+pages, datasources, files, whoami and help. It does not expose login, auth, workers,
+local file inputs, process environment overrides, terminal or Notion MCP.
 
-Use terminal to run scripts/ntn_profile.py with Hermes' own Python.
-The wrapper accepts api, pages, datasources and files commands.
-It uses the active HERMES_HOME; it does not select another profile for you.
-Inspect the profile identity before workspace work:
+Outside automated comment turns, use terminal with scripts/ntn_profile.py and
+Hermes' Python runtime for approved workspace work. Do not put a token in arguments.
 
-```text
-<hermes-python> <plugin-dir>/skills/use/scripts/ntn_profile.py api v1/users/me
-```
+## Requests
 
-Read-only examples, with the same wrapper prefix:
+GET is the default. A body selects POST unless -X specifies the method.
+For API writes, pass JSON in body. name==value query arguments remain supported.
+Do not combine body with --data. Local --data @path, --file and --filter-file inputs
+are refused. Use literal Markdown stdin or --content for high-level page commands.
 
-```text
-api v1/pages/<page-id>
-api v1/blocks/<block-id>/children page_size==100
-api v1/comments block_id==<block-id> page_size==100
-api v1/search query="page title"
-pages get <page-id> --json
-```
+Examples of args, without the ntn executable:
+- ["api", "v1/users/me"]
+- ["api", "v1/pages/<page-id>"]
+- ["api", "v1/blocks/<block-id>/children", "page_size==100"]
+- ["api", "v1/comments", "block_id==<block-id>", "page_size==100"]
+- ["api", "v1/search"] with body={"query": "page title"}
+- ["pages", "get", "<page-id>", "--json"]
+- ["pages", "create", "--parent", "page:<approved-id>", "--content", "# Title"]
+- ["datasources", "query", "<data-source-id>", "--filter", "<literal-json>"]
 
-Use api <endpoint> --spec or --docs before an unfamiliar request.
-The installed CLI help is the authority for flags.
-GET is the default. Body input selects POST unless -X overrides it.
-Use name==value for query parameters, path=value for body strings,
-and path:=json for typed body values. Use exactly one body source.
-The supported JSON-file flag is --data @body.json, not an assumed --json flag.
+Use a template path for --spec/--docs and select -X when several methods exist:
+["api", "v1/blocks/{block_id}", "-X", "PATCH", "--spec"].
+Use a real ID for the actual request. The installed CLI help is the flag authority.
 
-Follow has_more and next_cursor for complete listings. Do not report the first
-page as a complete inventory. Respect rate limits and Retry-After.
-A search miss does not prove that a page does not exist.
+## Writes and scope
 
-For authorized writes, retrieve the target first, then use the current schema.
-Use the data_source_id for modern database-row parents where required.
-Do not copy an old database_id recipe into a newer API without checking it.
-Read back every write. Do not automatically repeat a possibly successful write.
+Block/page/database/data-source targets and creation parents must be in the
+profile's approved roots. Creation without a parent is refused.
+Raw comment writes from Notion turns are refused; the gateway owns receipt/reply delivery.
+Connection sharing and capabilities still control what Notion permits.
 
-CLI Markdown endpoints may use a different API version from the plugin's
-2022-06-28 REST client. Do not change the gateway version to match a CLI example.
-Use --notion-version only after checking endpoint compatibility.
+Use a modern database's data_sources list before creating rows. Read schema first.
+A page-selection edit should PATCH its exact block, preserving unrelated rich text.
+pages edit replaces whole-page Markdown and must not be used for a selected substring.
 
-The wrapper is credential isolation, not a universal mutation-policy sandbox.
-Outside automated comment turns, a terminal session retains its own rights.
-Human authorization, page sharing and root boundaries still apply.
+DELETE/trash/archive needs an exact original-human approve-delete directive for
+the target. A model flag, quote or negative sentence does not authorize deletion.
+Workers, authentication and paid deployment remain separate operator actions.
 
+## Recovery and verification
+
+Follow has_more and next_cursor. NTN files list returns only its first page.
+The tool reports truncation above 60000 output characters. Refine or paginate the read.
+Read back every write. Successful mutation responses are cached per triggering comment.
+An ambiguous mutation records its intent and is never automatically executed again.
+Further mutations for that triggering comment are refused, even if arguments change.
+A fresh human request is necessary after checking whether the prior change happened.
+
+NTN uses current official endpoint versions. Gateway baseline reads stay separate;
+comment PATCH and modern container fallback use 2026-03-11.
 Official documentation: https://developers.notion.com/guides/cli
-Use ntn api <endpoint> --docs for endpoint-specific official guidance.
+Use endpoint --docs to retrieve the current official guidance.

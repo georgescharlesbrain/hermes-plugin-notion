@@ -32,7 +32,7 @@ def test_adapter_suppresses_default_mcp_tools():
     obj = object.__new__(adapter.NotionAdapter)
     obj.platform = "notion"
     source = SimpleNamespace(platform=obj.platform, profile="greta")
-    assert obj.toolsets_for_source(source) == ["notion", "no_mcp"]
+    assert obj.toolsets_for_source(source) == ["notion", "skills", "no_mcp"]
     assert obj.toolsets_for_source(SimpleNamespace(platform="asana")) is None
 
 

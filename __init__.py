@@ -2,7 +2,7 @@
 
 Registers:
 - the ``notion`` gateway platform: Notion comment webhooks in, one profile-local agent session per page (``hermes_notion.adapter``);
-- the ``notion`` toolset: ``notion_reply_comment``, ``notion_get_comments``;
+- the ``notion`` toolset: ``notion_reply_comment``, ``notion_get_comments``, ``notion_ntn``;
 - deterministic @greta mention routing and loop guard.
 
 Configuration lives in ``platforms.notion`` of ``config.yaml``, credentials in ``.env``.
