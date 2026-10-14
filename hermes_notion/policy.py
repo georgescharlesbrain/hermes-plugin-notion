@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, List, Optional, Set
 
 from . import notion_client
+from .settings import valid_profile_name
 
 NOTION_UUID_REGEX = re.compile(
     r"^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$"
@@ -119,9 +120,10 @@ def check_mutation_gate(
     allowed_root_ids: List[str],
     allowed_user_ids: Optional[List[str]] = None,
     issuer_user_id: Optional[str] = None,
+    allow_workspace_access: Optional[bool] = None,
 ) -> MutationDecision:
     """Common mutation gate across all plugin write tools."""
-    if profile not in {"aroa", "greta"}:
+    if not valid_profile_name(profile):
         return MutationDecision(False, "unsupported_profile", target_id, operation, profile)
 
     if not token or not token.strip():
@@ -138,22 +140,13 @@ def check_mutation_gate(
     if operation not in supported_ops:
         return MutationDecision(False, "unsupported_operation", target_id, operation, profile)
 
-    # Greta cannot have wildcard authority
-    if profile == "greta":
-        if "*" in allowed_root_ids:
-            return MutationDecision(False, "wildcard_forbidden_for_profile", target_id, operation, profile)
-        if not allowed_root_ids:
-            return MutationDecision(False, "outside_allowed_roots", target_id, operation, profile)
-        if in_scope(token, target_id, allowed_root_ids, profile="greta"):
-            return MutationDecision(True, "authorized_in_scope", target_id, operation, profile)
+    # Production callers pass configured authority. The default preserves old direct API callers.
+    workspace_allowed = profile == "aroa" if allow_workspace_access is None else allow_workspace_access
+    if any(root in {"*", "workspace"} for root in allowed_root_ids) and not workspace_allowed:
+        return MutationDecision(False, "wildcard_forbidden_for_profile", target_id, operation, profile)
+    if not allowed_root_ids:
         return MutationDecision(False, "outside_allowed_roots", target_id, operation, profile)
-
-    # Aroa has full GCB workspace authority
-    if profile == "aroa":
-        if "*" in allowed_root_ids or not allowed_root_ids:
-            return MutationDecision(True, "authorized_workspace_authority", target_id, operation, profile)
-        if in_scope(token, target_id, allowed_root_ids, profile="aroa"):
-            return MutationDecision(True, "authorized_in_scope", target_id, operation, profile)
-        return MutationDecision(False, "outside_allowed_roots", target_id, operation, profile)
-
+    if in_scope(token, target_id, allowed_root_ids, profile=profile):
+        reason = "authorized_workspace_authority" if "*" in allowed_root_ids else "authorized_in_scope"
+        return MutationDecision(True, reason, target_id, operation, profile)
     return MutationDecision(False, "outside_allowed_roots", target_id, operation, profile)

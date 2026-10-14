@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import List, Optional
 
 from agent.secret_scope import get_secret
-from hermes_constants import get_hermes_home
+from hermes_constants import get_hermes_home, profile_name_for_home
 
 
 def _scoped_secret(name: str) -> str:
@@ -58,6 +59,24 @@ GRETA_ALLOWED_ROOT_IDS = [
 ]
 
 
+def valid_profile_name(profile) -> bool:
+    return isinstance(profile, str) and profile != "stopped" and bool(re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", profile))
+
+
+def runtime_profile() -> str:
+    # Keep the existing default-profile ownership/session records under their legacy alias.
+    name = profile_name_for_home(get_hermes_home()) or "default"
+    return "aroa" if name == "default" else name
+
+
+def legacy_peers() -> list:
+    # Public addressing metadata only; never read another profile's config or credentials.
+    return [
+        {"profile": "aroa", "mention_names": list(AROA_MENTION_NAMES), "bot_user_id": AROA_BOT_USER_ID},
+        {"profile": "greta", "mention_names": list(GRETA_MENTION_NAMES), "bot_user_id": GRETA_BOT_USER_ID},
+    ]
+
+
 @dataclass
 class NotionSettings:
     host: str = DEFAULT_HOST
@@ -68,52 +87,103 @@ class NotionSettings:
     webhook_secret: str = field(default="", repr=False)
     bot_integration_id: str = ""
     bot_user_id: str = ""
-    mention_names: List[str] = None
+    mention_names: Optional[List[str]] = None
     allowed_user_ids: List[str] = field(default_factory=list)
     allowed_root_ids: List[str] = field(default_factory=list)
+    allow_workspace_access: bool = False
+    peer_agents: Optional[List[dict]] = None
 
     def __post_init__(self):
-        if self.profile not in {"aroa", "greta"}:
-            raise ValueError("unsupported Notion profile")
+        if not valid_profile_name(self.profile):
+            raise ValueError("invalid Notion profile")
         if self.mention_names is None:
-            self.mention_names = list(AROA_MENTION_NAMES if self.profile == "aroa" else GRETA_MENTION_NAMES)
+            self.mention_names = list(
+                AROA_MENTION_NAMES if self.profile == "aroa" else
+                GRETA_MENTION_NAMES if self.profile == "greta" else [])
+        if self.peer_agents is None:
+            self.peer_agents = legacy_peers() if self.profile in {"aroa", "greta"} else []
 
     @classmethod
-    def for_profile(cls, profile: str = "greta") -> NotionSettings:
-        if profile not in {"aroa", "greta"}:
-            raise ValueError("unsupported Notion profile")
-        suffix = profile.upper()
-        allowed_roots = ["*"] if profile == "aroa" else list(GRETA_ALLOWED_ROOT_IDS)
-        return cls(
+    def for_profile(cls, profile: str = "greta", extra: Optional[dict] = None,
+                    legacy_defaults: Optional[bool] = None) -> NotionSettings:
+        if not valid_profile_name(profile):
+            raise ValueError("invalid Notion profile")
+        legacy = profile in {"aroa", "greta"} and (legacy_defaults is None or legacy_defaults)
+        if not legacy and extra is None:
+            raise ValueError("profile configuration required")
+        suffix = profile.upper().replace("-", "_")
+        settings = cls(
             profile=profile,
             token=_scoped_secret(f"NOTION_API_TOKEN_{suffix}") or _scoped_secret("NOTION_API_TOKEN"),
             webhook_secret=_scoped_secret(f"NOTION_WEBHOOK_SECRET_{suffix}") or _scoped_secret("NOTION_WEBHOOK_SECRET"),
-            bot_integration_id=AROA_BOT_INTEGRATION_ID if profile == "aroa" else GRETA_BOT_INTEGRATION_ID,
-            bot_user_id=AROA_BOT_USER_ID if profile == "aroa" else GRETA_BOT_USER_ID,
-            allowed_user_ids=[KOEN_USER_ID],
-            allowed_root_ids=allowed_roots,
         )
+        if legacy:
+            # Compatibility only. New profiles inherit none of these identities or grants.
+            aroa = profile == "aroa"
+            settings.bot_integration_id = AROA_BOT_INTEGRATION_ID if aroa else GRETA_BOT_INTEGRATION_ID
+            settings.bot_user_id = AROA_BOT_USER_ID if aroa else GRETA_BOT_USER_ID
+            settings.allowed_user_ids = [KOEN_USER_ID]
+            settings.allowed_root_ids = ["*"] if aroa else list(GRETA_ALLOWED_ROOT_IDS)
+            settings.allow_workspace_access = aroa
+        extra = extra or {}
+        if not legacy:
+            required = ("bot_integration_id", "bot_user_id", "mention_names", "allowed_user_ids", "allowed_root_ids")
+            if any(name not in extra or not extra[name] for name in required):
+                raise ValueError("explicit profile identity and grants required")
+            settings.peer_agents = []
+        for name in ("host", "port", "webhook_path", "bot_integration_id", "bot_user_id",
+                     "mention_names", "allowed_user_ids", "allowed_root_ids", "allow_workspace_access",
+                     "peer_agents"):
+            if name not in extra:
+                continue
+            value = extra[name]
+            # Existing installed configs contain empty staged grants. Preserve only legacy behavior.
+            if legacy and name in {"allowed_user_ids", "allowed_root_ids", "bot_integration_id", "bot_user_id"} and not value:
+                continue
+            setattr(settings, name, value)
+        settings.port = int(settings.port)
+        if not 1 <= settings.port <= 65535:
+            raise ValueError("invalid listener port")
+        if not isinstance(settings.webhook_path, str) or not re.fullmatch(r"/[a-zA-Z0-9/_-]+", settings.webhook_path):
+            raise ValueError("invalid webhook path")
+        if type(settings.allow_workspace_access) is not bool:
+            raise ValueError("invalid workspace authority")
+        for name in ("mention_names", "allowed_user_ids", "allowed_root_ids"):
+            values = getattr(settings, name)
+            if not isinstance(values, list) or not all(isinstance(v, str) and v.strip() for v in values):
+                raise ValueError(f"invalid {name}")
+            if not legacy and not values:
+                raise ValueError(f"missing {name}")
+        for name in ("bot_integration_id", "bot_user_id"):
+            if not isinstance(getattr(settings, name), str) or not getattr(settings, name).strip():
+                raise ValueError(f"missing {name}")
+        if any(root in {"*", "workspace"} for root in settings.allowed_root_ids) and not settings.allow_workspace_access:
+            raise ValueError("explicit workspace authority required")
+        if not isinstance(settings.peer_agents, list):
+            raise ValueError("invalid peer agents")
+        for peer in settings.peer_agents:
+            if not isinstance(peer, dict) or not valid_profile_name(peer.get("profile")):
+                raise ValueError("invalid peer profile")
+            names = peer.get("mention_names")
+            if not isinstance(names, list) or not names or not all(isinstance(v, str) and v.strip() for v in names):
+                raise ValueError("invalid peer mention names")
+            if not isinstance(peer.get("bot_user_id", ""), str):
+                raise ValueError("invalid peer bot identity")
+        return settings
 
     @classmethod
     def from_config(cls, extra: Optional[dict] = None) -> NotionSettings:
-        extra = extra or {}
-        home = get_hermes_home()
-        default_profile = home.name if home.parent.name == "profiles" else "aroa"
-        if extra.get("profile", default_profile) != default_profile:
+        if extra is None:
+            from hermes_cli.config import load_config
+            platform = (load_config().get("platforms") or {}).get("notion") or {}
+            extra = platform.get("extra", platform)
+        if not isinstance(extra, dict):
+            raise ValueError("invalid Notion configuration")
+        profile = runtime_profile()
+        configured = extra.get("profile", profile)
+        actual_profile = profile_name_for_home(get_hermes_home()) or "default"
+        if configured == "default" and actual_profile == "default":
+            configured = "aroa"
+        if configured != profile:
             raise ValueError("profile runtime mismatch")
-        settings = cls.for_profile(default_profile)
-        for name in ("host", "port", "webhook_path", "bot_integration_id", "bot_user_id",
-                     "mention_names", "allowed_user_ids", "allowed_root_ids"):
-            if name in extra:
-                val = extra[name]
-                if name in ("allowed_user_ids", "allowed_root_ids") and not val:
-                    continue
-                if name in ("bot_integration_id", "bot_user_id") and not val:
-                    continue
-                setattr(settings, name, val)
-        settings.port = int(settings.port)
-        for name in ("mention_names", "allowed_user_ids", "allowed_root_ids"):
-            values = getattr(settings, name)
-            if not isinstance(values, list) or not all(isinstance(v, str) and v for v in values):
-                raise ValueError(f"invalid {name}")
-        return settings
+        return cls.for_profile(profile, extra, legacy_defaults=actual_profile in {"default", "greta"})

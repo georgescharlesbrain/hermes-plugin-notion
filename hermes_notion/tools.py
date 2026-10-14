@@ -70,6 +70,7 @@ def reply_comment(args: Dict[str, Any], **kw: Any) -> Dict[str, Any]:
         allowed_root_ids=settings.allowed_root_ids,
         allowed_user_ids=settings.allowed_user_ids,
         issuer_user_id=kw.get("issuer_user_id"),
+        allow_workspace_access=settings.allow_workspace_access,
     )
     if not gate.allowed:
         return {"ok": False, "error": gate.reason}

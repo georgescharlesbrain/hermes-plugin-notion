@@ -19,7 +19,7 @@ Use notion:use for ordinary workspace work and comments.
 
 ## When to use
 
-- Add or verify the Notion connection for a supported Hermes profile.
+- Add or verify the Notion connection for a configured Hermes profile.
 - Configure page sharing, credentials and a webhook subscription.
 - Diagnose missing comment replies or maintain the plugin deployment.
 - Do not use a connection failure as permission to broaden access.
@@ -37,8 +37,10 @@ Use notion:use for ordinary workspace work and comments.
 9. Check the public route, signature enforcement and a real human comment.
 10. Read back the reply in the original discussion before declaring readiness.
 
-The implemented plugin supports Aroa and Greta. A new arbitrary profile needs
-implementation and policy work; this guide does not make it supported.
+The plugin supports configured named profiles. New profiles require explicit bot identity,
+mention names, authorized human IDs and allowed roots. They inherit no legacy permissions.
+Keep each profile's credentials and plugin-data private. See docs/profile-setup.md for the
+configuration example, peer addressing, compatibility defaults and setup verification.
 
 Read the plugin's docs/profile-setup.md for the human setup instructions.
 Read references/webhook-activation.md before creating or replacing a subscription.

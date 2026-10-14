@@ -7,11 +7,10 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
-from typing import Any
 from gateway.session_context import get_session_env
 from hermes_constants import get_hermes_home
 from . import notion_client, policy, storage
-from .settings import NotionSettings
+from .settings import NotionSettings, legacy_peers
 
 MAX_OUTPUT = 60000
 MAX_INPUT = 262144
@@ -49,7 +48,8 @@ def _current_request(settings):
     if original.get("discussion_id") != storage.get_comment_discussion(cid):
         raise ValueError("request_discussion_mismatch")
     gate = policy.check_mutation_gate(settings.profile, settings.token, target, "update",
-        settings.allowed_root_ids, settings.allowed_user_ids, author)
+        settings.allowed_root_ids, settings.allowed_user_ids, author,
+        allow_workspace_access=settings.allow_workspace_access)
     if not gate.allowed:
         raise ValueError(gate.reason)
     return original
@@ -193,11 +193,14 @@ def validate(argv, body=None, stdin=None):
         return verb == "create", [], False
     raise ValueError("unsupported_command")
 
-def _approved_delete(original, targets):
+def _approved_delete(original, targets, mention_names=None):
     text = "".join(r.get("plain_text", "") for r in (original or {}).get("rich_text", []))
     directives = []
+    names = mention_names if mention_names is not None else [name for peer in legacy_peers() for name in peer["mention_names"]]
+    prefix = "@?(?:" + "|".join(re.escape(name) for name in names) + r")[,:]?\s+" if names else ""
+    pattern = "(?:" + prefix + ")?" if prefix else ""
     for line in text.strip().splitlines():
-        match = re.fullmatch(r"(?:aroa[,:]?\s+|greta[,:]?\s+)?approve-delete\s+(" + ID + r")", line.strip(), re.IGNORECASE)
+        match = re.fullmatch(pattern + r"approve-delete\s+(" + ID + r")", line.strip(), re.IGNORECASE)
         if not match:
             return False
         directives.append(policy.normalize_identifier(match[1]))
@@ -228,7 +231,7 @@ def execute(args: dict, settings=None) -> dict:
             if not _scope(settings, target): raise ValueError("outside_allowed_roots")
             checked.append(target)
         if destructive:
-            if not original or not _approved_delete(original, checked):
+            if not original or not _approved_delete(original, checked, settings.mention_names):
                 raise ValueError("explicit_delete_approval_required")
         executable = shutil.which("ntn")
         if not executable: raise ValueError("ntn_not_installed")

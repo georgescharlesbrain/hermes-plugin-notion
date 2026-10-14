@@ -7,7 +7,6 @@ import hashlib
 import hmac
 import json
 import logging
-import os
 from typing import Any, Dict, List, Optional, Set
 from uuid import UUID
 
@@ -16,7 +15,7 @@ from gateway.platforms.base import BasePlatformAdapter, SendResult
 from gateway.platforms.event import MessageEvent, MessageType
 
 from . import notion_client, router, storage, policy
-from .settings import NotionSettings, WEBHOOK_PATH
+from .settings import NotionSettings, WEBHOOK_PATH, valid_profile_name
 
 try:
     from aiohttp import web
@@ -65,7 +64,10 @@ def _comment_page(token: str, comment: Dict[str, Any]) -> Optional[str]:
 
 def check_requirements() -> bool:
     """Available only with a credential in the active profile secret scope."""
-    return bool(NotionSettings.from_config().token.strip())
+    try:
+        return bool(NotionSettings.from_config().token.strip())
+    except ValueError:
+        return False
 
 def is_connected(adapter: Optional[BasePlatformAdapter] = None) -> bool:
     return bool(adapter and getattr(adapter, "_running", False))
@@ -79,11 +81,13 @@ def _log_identifier(value: Any) -> str:
         return "<missing-or-invalid>"
 
 
-def _profile_from_path(path: str) -> str:
-    path_lower = path.lower()
-    if "aroa" in path_lower:
-        return "aroa"
-    return "greta"
+def _profile_from_path(path: str) -> Optional[str]:
+    """Parse an explicit profile route only; the live adapter owns route resolution."""
+    prefix = WEBHOOK_PATH + "/"
+    if not isinstance(path, str) or not path.startswith(prefix):
+        return None
+    profile = path[len(prefix):]
+    return profile if valid_profile_name(profile) else None
 
 from functools import wraps
 from hermes_constants import set_hermes_home_override, reset_hermes_home_override
@@ -250,6 +254,7 @@ class NotionAdapter(BasePlatformAdapter):
             allowed_root_ids=self.settings.allowed_root_ids,
             allowed_user_ids=self.settings.allowed_user_ids,
             issuer_user_id=issuer_user_id,
+            allow_workspace_access=self.settings.allow_workspace_access,
         )
         if not gate.allowed:
             return SendResult(success=False, error=gate.reason)
@@ -326,7 +331,7 @@ class NotionAdapter(BasePlatformAdapter):
                     await asyncio.to_thread(storage.finish_acknowledgement, comment_id)
 
             return SendResult(success=True, message_id=reply_comment_id)
-        except Exception as exc:
+        except Exception:
             if reservation_id:
                 await asyncio.to_thread(storage.rollback_reply_reservation, reservation_id)
             logger.warning("[notion] Comment reply failed")
@@ -489,7 +494,7 @@ class NotionAdapter(BasePlatformAdapter):
 
         try:
             comment_obj = await asyncio.to_thread(notion_client.get_comment, token, comment_id)
-        except Exception as exc:
+        except Exception:
             logger.warning("[notion] Comment fetch failed")
             return
 
@@ -499,11 +504,10 @@ class NotionAdapter(BasePlatformAdapter):
         recipient = None
         if routed.reason == "addressed_to_other_user":
             from dataclasses import replace
-            from .settings import AROA_MENTION_NAMES, GRETA_MENTION_NAMES
-            for candidate, names, bot_id in (
-                ("aroa", AROA_MENTION_NAMES, router.AROA_BOT_ID),
-                ("greta", GRETA_MENTION_NAMES, router.GRETA_BOT_ID),
-            ):
+            # Foreign explicit addressing closes local implicit ownership even without a known peer.
+            recipient = "__foreign__"
+            for peer in profile_settings.peer_agents:
+                candidate, names, bot_id = peer["profile"], peer["mention_names"], peer.get("bot_user_id", "")
                 if candidate == profile:
                     continue
                 # Pure routing only. Never load another profile's settings or credentials.
@@ -528,6 +532,7 @@ class NotionAdapter(BasePlatformAdapter):
             allowed_root_ids=self.settings.allowed_root_ids,
             allowed_user_ids=self.settings.allowed_user_ids,
             issuer_user_id=routed.author_id,
+            allow_workspace_access=self.settings.allow_workspace_access,
         )
         if not gate.allowed:
             return

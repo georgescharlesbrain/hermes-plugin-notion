@@ -2,6 +2,7 @@
 from gateway.session_context import get_session_env
 from hermes_constants import get_hermes_home
 from . import storage
+from .settings import valid_profile_name
 
 ALLOWED_TOOLS = frozenset({"notion_get_comments", "notion_ntn"})
 GUIDANCE_TOOLS = frozenset({"skill_view"})
@@ -38,6 +39,6 @@ def check(tool_name="", args=None, **_):
     chat_id = get_session_env("HERMES_SESSION_CHAT_ID", "")
     owned = storage.comment_has_owned_discussion(get_session_env("HERMES_SESSION_MESSAGE_ID", ""), chat_id[len("notion:page:"):], profile) if chat_id.startswith("notion:page:") else (
         bool(discussion) and storage.get_discussion_owner(discussion) == profile)
-    if profile not in {"aroa", "greta"} or not owned:
+    if not valid_profile_name(profile) or not owned:
         return {"action": "block", "message": "This Notion discussion is stopped or is not owned by this profile."}
     return None

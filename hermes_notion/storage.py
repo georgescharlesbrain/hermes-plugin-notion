@@ -7,7 +7,7 @@ import secrets
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +154,9 @@ def get_acknowledgement(comment_id: str) -> Optional[str]:
 
 
 def secrets_path(profile: str = "greta") -> Path:
+    from .settings import valid_profile_name
+    if not valid_profile_name(profile):
+        raise ValueError("invalid Notion profile")
     filename = "secrets.json" if profile == "greta" else f"secrets_{profile}.json"
     return data_dir() / filename
 

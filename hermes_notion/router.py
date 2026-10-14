@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set
 
-from .settings import NotionSettings, AROA_MENTION_NAMES, GRETA_MENTION_NAMES
+from .settings import NotionSettings
 
 logger = logging.getLogger(__name__)
 
@@ -77,8 +77,6 @@ def _is_addressed_at_start(plain_text: str, rich_text: List[Dict[str, Any]], nam
             if mention.get("type") == "user":
                 user = mention.get("user", {})
                 uid = user.get("id", "")
-                uname = (user.get("name") or "").lower()
-                uemail = (user.get("person", {}).get("email") or "").lower()
                 if bool(bot_user_id and uid == bot_user_id):
                     return True
 
@@ -89,12 +87,12 @@ def _is_addressed_at_start(plain_text: str, rich_text: List[Dict[str, Any]], nam
 
     return False
 
-def _other_addressed_at_start(plain_text: str, rich_text: List[Dict[str, Any]], names: List[str], bot_user_id: str) -> bool:
+def _other_addressed_at_start(plain_text: str, rich_text: List[Dict[str, Any]], names: List[str], bot_user_id: str, peer_agents=None) -> bool:
     """True when another user/bot is explicitly addressed at the start."""
     clean_text = plain_text.strip()
     bot_names = [n.lower() for n in names]
 
-    for name in (*AROA_MENTION_NAMES, *GRETA_MENTION_NAMES):
+    for name in [name for peer in (peer_agents or []) for name in peer.get("mention_names", [])]:
         if name.lower() not in bot_names and re.match(
             rf"^@?{re.escape(name.lower())}([:\s,!-].*|$)", clean_text.lower()
         ):
@@ -107,8 +105,6 @@ def _other_addressed_at_start(plain_text: str, rich_text: List[Dict[str, Any]], 
             if mention.get("type") == "user":
                 user = mention.get("user", {})
                 uid = user.get("id", "")
-                uname = (user.get("name") or "").lower()
-                uemail = (user.get("person", {}).get("email") or "").lower()
                 is_our_bot = bool(bot_user_id and uid == bot_user_id)
                 if not is_our_bot:
                     return True
@@ -194,7 +190,7 @@ def evaluate_comment(
         )
 
     # 4. Check if another user/bot is addressed at start
-    if _other_addressed_at_start(full_text, rich_text, settings.mention_names, settings.bot_user_id):
+    if _other_addressed_at_start(full_text, rich_text, settings.mention_names, settings.bot_user_id, settings.peer_agents):
         return RoutedComment(
             actionable=False,
             reason="addressed_to_other_user",

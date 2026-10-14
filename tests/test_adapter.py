@@ -44,4 +44,6 @@ def test_signature_validation():
 def test_profile_from_path():
     assert adapter._profile_from_path("/webhooks/notion/aroa") == "aroa"
     assert adapter._profile_from_path("/webhooks/notion/greta") == "greta"
-    assert adapter._profile_from_path("/webhooks/notion") == "greta"
+    assert adapter._profile_from_path("/webhooks/notion/luna") == "luna"
+    assert adapter._profile_from_path("/webhooks/notion") is None
+    assert adapter._profile_from_path("/unrelated/aroa") is None

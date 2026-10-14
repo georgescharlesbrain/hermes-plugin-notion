@@ -46,6 +46,63 @@ integration ID, listener port and endpoint. The webhook integration ID comes
 from the connection or subscription metadata. Do not infer it from a bot user
 ID. Keep all existing profile permissions unless the operator approves a change.
 
+## Add a configured named profile
+
+The plugin accepts configured Hermes profiles, not only Aroa and Greta.
+Create the Hermes profile through its supported setup flow. Symlink its plugins/notion
+to the canonical plugin checkout. Do not symlink its .env, config.yaml, state.db or plugin-data.
+Use a lowercase Hermes profile name. The legacy stop marker `stopped` is reserved.
+
+Store a profile-local NOTION_API_TOKEN through the approved credential interface.
+The profile-suffixed compatibility key is also supported; dashes become underscores.
+Configure the following under that profile's platforms.notion.extra.
+Replace every placeholder with verified connection and human IDs.
+
+```yaml
+platforms:
+  notion:
+    enabled: true
+    extra:
+      profile: luna
+      host: 127.0.0.1
+      port: 8649
+      webhook_path: /webhooks/notion/luna
+      bot_user_id: "<verified bot user UUID>"
+      bot_integration_id: "<verified webhook integration UUID>"
+      mention_names: [luna]
+      allowed_user_ids: ["<authorized human UUID>"]
+      allowed_root_ids: ["<approved page or database UUID>"]
+      allow_workspace_access: false
+      peer_agents:
+        - profile: greta
+          mention_names: [greta, "greta@ufahamu.xyz"]
+          bot_user_id: "<verified Greta bot user UUID>"
+```
+
+New profiles need explicit nonempty bot identity, names, trusted human IDs and roots.
+They inherit no Aroa/Greta account, human or root permissions.
+Wildcard/workspace roots require explicit allow_workspace_access: true and operator approval.
+Keep the narrow root policy unless broader access is required.
+
+peer_agents contains public addressing metadata only, private to this profile's configuration.
+It never reads peer credentials, histories or routing databases.
+Configure known peers' literal names if unprefixed names must transfer discussion ownership.
+An unknown explicit @recipient is rejected and closes local implicit ownership.
+Each receiving profile independently decides whether the human is authorized.
+
+Existing Aroa/Greta aliases, credentials, staged empty-list compatibility grants and private
+state filenames remain supported. Empty grants on those legacy configurations still select
+their compatibility defaults; do not use an empty legacy list as a revocation mechanism.
+New profiles fail closed on missing or empty grants.
+The default Hermes profile retains its existing logical Aroa ownership records.
+No session history or replay state is migrated or merged.
+
+Create a distinct listener/tunnel route through the operator's approved setup workflow.
+Unknown routes must not use another profile's adapter. No live profile, token, subscription
+or Cloudflare configuration is created by this code change.
+Test a real authorized comment, wrong-agent addressing and private session/state separation
+after completing connection sharing, capability and verified active webhook setup.
+
 ## 3. Set up the webhook subscription
 
 A webhook tells Hermes that a new comment exists. The API token alone does not
