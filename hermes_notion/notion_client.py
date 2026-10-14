@@ -18,11 +18,11 @@ class NotionClientError(Exception):
         self.message = message
         self.code = code
 
-def _request(token: str, path: str, method: str = "GET", data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def _request(token: str, path: str, method: str = "GET", data: Optional[Dict[str, Any]] = None, *, version: str = NOTION_VERSION) -> Dict[str, Any]:
     url = f"{API_BASE}{path}" if path.startswith("/") else f"{API_BASE}/{path}"
     headers = {
         "Authorization": f"Bearer {token}",
-        "Notion-Version": NOTION_VERSION,
+        "Notion-Version": version,
         "Content-Type": "application/json"
     }
     body = json.dumps(data).encode("utf-8") if data is not None else None
@@ -85,6 +85,23 @@ def extract_block_text(block: Dict[str, Any]) -> str:
             parts = [item.get("plain_text", "") for item in rich_text if isinstance(item, dict)]
             return "".join(parts).strip()
     return ""
+
+def create_acknowledgement(token: str, discussion_id: str, content: str) -> Dict[str, Any]:
+    """Fixed-text receipt. Never called by the model."""
+    return create_comment_reply(token, discussion_id, content)
+
+
+def update_comment(token: str, comment_id: str, content: str) -> Dict[str, Any]:
+    chunks = [{"type": "text", "text": {"content": content[i:i + 1900]}}
+              for i in range(0, len(content), 1900)]
+    if not chunks:
+        chunks = [{"type": "text", "text": {"content": " "}}]
+    if len(chunks) > 100:
+        raise NotionClientError(400, "comment_too_long")
+    # Updating comments is available in this version. Keep existing reads unchanged.
+    return _request(token, f"/comments/{comment_id}", method="PATCH",
+                    data={"rich_text": chunks}, version="2026-03-11")
+
 
 def create_comment_reply(token: str, discussion_id: str, content: str) -> Dict[str, Any]:
     # Chunk content if necessary (Notion limit is 2000 chars per text block)

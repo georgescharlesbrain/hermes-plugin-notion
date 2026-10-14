@@ -74,7 +74,54 @@ def _db_connection() -> sqlite3.Connection:
         db.execute("CREATE TABLE IF NOT EXISTS page_discussions (discussion_id TEXT PRIMARY KEY, page_id TEXT NOT NULL)")
         db.execute("CREATE TABLE IF NOT EXISTS routing_events (discussion_id TEXT PRIMARY KEY, event_time REAL NOT NULL, comment_id TEXT NOT NULL)")
         db.execute("CREATE TABLE IF NOT EXISTS comment_discussions (comment_id TEXT PRIMARY KEY, discussion_id TEXT NOT NULL)")
+        db.execute("CREATE TABLE IF NOT EXISTS acknowledgements (comment_id TEXT PRIMARY KEY, reply_id TEXT, finished INTEGER DEFAULT 0, final_attempt INTEGER DEFAULT 0)")
     return db
+
+
+def save_acknowledgement(comment_id: str, reply_id: Optional[str]) -> None:
+    db = _db_connection()
+    try:
+        with db:
+            db.execute("INSERT INTO acknowledgements (comment_id, reply_id) VALUES (?, ?) ON CONFLICT(comment_id) DO UPDATE SET reply_id = excluded.reply_id", (comment_id, reply_id))
+    finally:
+        db.close()
+
+
+def acknowledgement_state(comment_id: str) -> Optional[dict]:
+    db = _db_connection()
+    try:
+        row = db.execute("SELECT reply_id, finished, final_attempt FROM acknowledgements WHERE comment_id = ?", (comment_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        db.close()
+
+
+def claim_acknowledgement_update(comment_id: str) -> bool:
+    db = _db_connection()
+    try:
+        with db:
+            result = db.execute("UPDATE acknowledgements SET final_attempt = 1 WHERE comment_id = ? AND final_attempt = 0 AND reply_id IS NOT NULL", (comment_id,))
+        return result.rowcount == 1
+    finally:
+        db.close()
+
+
+def finish_acknowledgement(comment_id: str) -> None:
+    db = _db_connection()
+    try:
+        with db:
+            db.execute("UPDATE acknowledgements SET finished = 1 WHERE comment_id = ?", (comment_id,))
+    finally:
+        db.close()
+
+
+def get_acknowledgement(comment_id: str) -> Optional[str]:
+    db = _db_connection()
+    try:
+        row = db.execute("SELECT reply_id FROM acknowledgements WHERE comment_id = ?", (comment_id,)).fetchone()
+        return row["reply_id"] if row else None
+    finally:
+        db.close()
 
 
 def secrets_path(profile: str = "greta") -> Path:

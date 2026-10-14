@@ -78,4 +78,4 @@ From an isolated clone with the installed Hermes environment:
 /usr/local/lib/hermes-agent/venv/bin/python -m pytest tests -q
 ```
 
-Fake API tests exercise real ingress/routing/dispatch/send code, profile scopes, replay, filters and budgets; they do not prove live webhook delivery. Tests use scratch homes and fake credentials. Client API version remains `2022-06-28`; changing versions requires a separate compatibility exercise, not an untested string change.
+Fake API tests exercise real ingress/routing/dispatch/send code, profile scopes, replay, filters and budgets; they do not prove live webhook delivery. Tests use scratch homes and fake credentials. Existing reads and creates retain API version `2022-06-28`. Comment replacement uses the verified `PATCH /comments/{comment_id}` endpoint with version `2026-03-11`.

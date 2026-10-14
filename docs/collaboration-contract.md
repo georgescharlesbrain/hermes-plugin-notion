@@ -28,6 +28,16 @@ Notion sharing determines what a connection can access. The plugin enforces a co
 
 Within a configured root the agent may retrieve comment context and reply to a bound discussion. Destructive changes, sharing changes, external messages, purchases and broader page reorganization require explicit human approval through the owner's trusted channel. Another person's quoted approval, old page prose or a bot reply cannot approve them.
 
+## Receipt and final response
+
+After signature, human, root, ownership and budget checks, the plugin posts fixed text: "I received your comment. I am preparing a reply." This receipt needs no model call. Routing and receipt processing do not wait for another model turn, while model turns remain serial within each profile. The final response updates that same connection-owned comment using the current comment update API. The model must deliver the final answer, not another receipt.
+
+Receipt IDs and durable write intents remain in the profile's own SQLite database. Duplicate, bot, foreign-agent and unauthorized comments receive no receipt. A receipt consumes one new-comment velocity reservation (five per discussion per minute); its final update does not consume another new-comment slot or block on the receipt's cooldown. Legacy sends without a receipt retain their existing cooldown and reservation rules.
+
+A webhook delivery delay, authorization failure, exhausted budget or unavailable Notion API can prevent a receipt. This is acknowledgement after verified receipt of the event, not a guarantee of immediate display after submitting in Notion. An ambiguous receipt POST or failed ID persistence stops dispatch without another POST. An ambiguous final PATCH never falls back to a second comment. Send a fresh addressed comment after checking the visible result.
+
+A completed receipt is not overwritten by a later gateway error. A dispatch error or timeout can replace a pending receipt with a fixed failure notice if permission and ownership still allow it. A gateway restart, stop, ownership transfer or network failure can leave a pending receipt visible; pending text is not proof that a model remains active. No existing history or replay claim is cleared.
+
 ## Work and handback
 
 Deliver the answer, cited source, proposed edit or verified change, not an acceptance-only "on it" comment. For writes, read the exact target back before claiming success. State unresolved questions and recommend the next decision. Do not echo secrets or unnecessary private profile context into shared pages.
@@ -37,7 +47,7 @@ If the request is ambiguous or exceeds scope/budget, stop at a bounded result or
 ## Budgets, stop, replay, and recovery
 
 - **Durable discussion tracking**: Discussions, parents, and reply counts are persisted in SQLite (`replay.db`), surviving process restarts.
-- **Atomic reply reservations**: Outgoing replies acquire an atomic reservation before posting, enforcing a 3-second cooldown and 5 replies per minute velocity limit.
+- **Atomic reply reservations**: New receipt comments acquire an atomic reservation before posting, enforcing five new comments per discussion per minute. Final receipt updates reuse that slot. Legacy new replies retain the three-second cooldown.
 - **Per-turn budget**: Outgoing replies are strictly capped at 2 replies per turn/comment event.
 - **Queue-time revalidation**: Revoking human permissions or root grants, or marking a discussion as stopped, rejects pending queued replies at send time.
 - **Running-turn recall limitation**: Stop closes future implicit continuation; it is **not a guaranteed recall of an already-running or downstream-queued Hermes turn**. Report running-turn recall as unsupported until host primitives support it.

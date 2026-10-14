@@ -35,7 +35,7 @@ def test_dispatch_posts_one_reply_without_consuming_cooldown(monkeypatch):
     def post(**kw):
         calls.append(kw)
         return {"id": "reply"}
-    monkeypatch.setattr(notion_client, "create_comment_reply", post)
+    monkeypatch.setattr(notion_client, "create_acknowledgement", post)
     async def handle(event):
         assert event.metadata["author_id"] == "human"
         result = await obj.send(event.source.chat_id, "pong", metadata=event.metadata)

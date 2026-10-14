@@ -31,6 +31,7 @@ PLATFORM_NAME = "notion"
 MAX_BODY_BYTES = 1_048_576
 MAX_TURN_SECONDS = 300
 MAX_PENDING_EVENTS = 32
+ACKNOWLEDGEMENT = "I received your comment. I am preparing a reply."
 
 def _comment_page(token: str, comment: Dict[str, Any]) -> Optional[str]:
     """Resolve the containing page through the current profile's API."""
@@ -101,6 +102,7 @@ class NotionAdapter(BasePlatformAdapter):
         self._home = get_hermes_home()
         self._owner_profile = self._home.name if self._home.parent.name == "profiles" else "default"
         self._processing = asyncio.Lock()
+        self._turn_processing = asyncio.Lock()
 
     def _spawn(self, coro) -> None:
         task = asyncio.create_task(coro)
@@ -240,6 +242,15 @@ class NotionAdapter(BasePlatformAdapter):
         if not gate.allowed:
             return SendResult(success=False, error=gate.reason)
 
+        receipt_state = await asyncio.to_thread(storage.acknowledgement_state, comment_id) if comment_id else None
+        if receipt_state:
+            if not receipt_state["reply_id"]:
+                return SendResult(success=False, error="acknowledgement_unverified")
+            if receipt_state["finished"]:
+                return SendResult(success=True, message_id=receipt_state["reply_id"])
+            if receipt_state["final_attempt"]:
+                return SendResult(success=False, error="acknowledgement_update_unverified")
+
         # Per-turn reply budget check
         if comment_id:
             turn_ok, turn_reason = await asyncio.to_thread(storage.claim_turn_reply, comment_id, 2)
@@ -247,9 +258,13 @@ class NotionAdapter(BasePlatformAdapter):
                 return SendResult(success=False, error=turn_reason)
 
         # Atomic reply reservation (cooldown & velocity breaker)
-        reserved, res_reason, reservation_id = await asyncio.to_thread(
-            storage.reserve_reply_slot, discussion_id, 3.0, 5, 60.0
-        )
+        # The receipt already reserves the new comment. Updating it creates no new reply.
+        if receipt_state:
+            reserved, res_reason, reservation_id = True, "", None
+        else:
+            reserved, res_reason, reservation_id = await asyncio.to_thread(
+                storage.reserve_reply_slot, discussion_id, 3.0, 5, 60.0
+            )
         if not reserved:
             logger.warning("[notion] Circuit breaker blocked outgoing reply on %s: %s", discussion_id, res_reason)
             return SendResult(success=False, error=res_reason)
@@ -266,22 +281,37 @@ class NotionAdapter(BasePlatformAdapter):
                 await asyncio.to_thread(storage.rollback_reply_reservation, reservation_id)
                 return SendResult(success=False, error="discussion_owner_changed")
             logger.info("[notion] Posting reply to discussion %s (%d chars) as [%s]", discussion_id, len(content), self.settings.profile)
-            res = await asyncio.to_thread(
-                notion_client.create_comment_reply,
-                token=token,
-                discussion_id=discussion_id,
-                content=content,
-            )
+            acknowledgement = receipt_state["reply_id"] if receipt_state else None
+            if acknowledgement:
+                # Never edit an arbitrary comment or fall back to another POST.
+                receipt = await asyncio.to_thread(notion_client.get_comment, token, acknowledgement)
+                if receipt.get("discussion_id") != discussion_id:
+                    raise ValueError("acknowledgement_discussion_mismatch")
+                if self.settings.bot_user_id and (receipt.get("created_by") or {}).get("id") != self.settings.bot_user_id:
+                    raise ValueError("acknowledgement_author_mismatch")
+                if not await asyncio.to_thread(storage.claim_acknowledgement_update, comment_id):
+                    return SendResult(success=False, error="acknowledgement_update_already_attempted")
+                res = await asyncio.to_thread(notion_client.update_comment,
+                    token=token, comment_id=acknowledgement, content=content)
+            else:
+                res = await asyncio.to_thread(
+                    notion_client.create_comment_reply,
+                    token=token, discussion_id=discussion_id, content=content,
+                )
             reply_comment_id = res.get("id")
 
             # Commit atomic reservation
             if reservation_id:
                 await asyncio.to_thread(storage.commit_reply_reservation, reservation_id)
             verified = await asyncio.to_thread(notion_client.get_comment, token, reply_comment_id)
+            if receipt_state and (reply_comment_id != receipt_state["reply_id"] or verified.get("id") != reply_comment_id):
+                return SendResult(success=False, error="acknowledgement_readback_mismatch")
             if verified.get("discussion_id") != discussion_id:
                 return SendResult(success=False, error="reply_readback_mismatch")
             if comment_id:
                 await asyncio.to_thread(storage.mark_comment_processed, comment_id)
+                if receipt_state:
+                    await asyncio.to_thread(storage.finish_acknowledgement, comment_id)
 
             return SendResult(success=True, message_id=reply_comment_id)
         except Exception as exc:
@@ -407,11 +437,31 @@ class NotionAdapter(BasePlatformAdapter):
     async def _process_comment_id(self, comment_id: str, profile: str, event_timestamp=None) -> None:
         async with self._processing:
             if event_timestamp is None:
-                await self._process_comment_serial(comment_id, profile)
+                event = await self._process_comment_serial(comment_id, profile)
             else:
-                await self._process_comment_serial(comment_id, profile, event_timestamp)
+                event = await self._process_comment_serial(comment_id, profile, event_timestamp)
+        if event is None:
+            return
+        # Receipt/routing is not held behind another model turn. Page turns stay serial.
+        if not hasattr(self, "_turn_processing"):
+            self._turn_processing = asyncio.Lock()
+        async with self._turn_processing:
+            if await asyncio.to_thread(storage.get_discussion_owner, event.metadata["discussion_id"]) != profile:
+                return
+            try:
+                await asyncio.wait_for(self.handle_message(event), timeout=MAX_TURN_SECONDS)
+            except asyncio.TimeoutError:
+                logger.warning("[notion] Dispatch wall-clock budget exceeded")
+                await self.send(event.source.chat_id,
+                    "I received your comment, but I could not finish the reply. Please send a new comment.",
+                    reply_to=comment_id, metadata=event.metadata)
+            except Exception:
+                logger.warning("[notion] Dispatch failed")
+                await self.send(event.source.chat_id,
+                    "I received your comment, but I could not finish the reply. Please send a new comment.",
+                    reply_to=comment_id, metadata=event.metadata)
 
-    async def _process_comment_serial(self, comment_id: str, profile: str, event_timestamp=None) -> None:
+    async def _process_comment_serial(self, comment_id: str, profile: str, event_timestamp=None) -> Optional[MessageEvent]:
         # Idempotency deduplication check
         if await asyncio.to_thread(storage.is_comment_processed, comment_id):
             logger.info("[notion] Comment %s already processed; skipping duplicate", comment_id)
@@ -492,10 +542,31 @@ class NotionAdapter(BasePlatformAdapter):
 
         # Circuit breaker / cooldown check before delegating to agent
         allowed, cb_reason = await asyncio.to_thread(
-            storage.check_circuit_breaker, routed.discussion_id, 3.0, 5, 60.0
+            storage.check_circuit_breaker, routed.discussion_id, 0.0, 5, 60.0
         )
         if not allowed:
             logger.warning("[notion] Circuit breaker blocked comment %s on %s: %s", comment_id, routed.discussion_id, cb_reason)
+            return
+
+        # At-most-once dispatch and receipt. Claim before any outward receipt write.
+        if not await asyncio.to_thread(storage.claim_comment, comment_id):
+            return
+        reserved, reason, reservation_id = await asyncio.to_thread(
+            storage.reserve_reply_slot, discussion_id, 0.0, 5, 60.0)
+        if not reserved:
+            logger.warning("[notion] Acknowledgement budget exceeded")
+            return
+        try:
+            # Durable intent before POST. An unknown result must never become another POST.
+            await asyncio.to_thread(storage.save_acknowledgement, comment_id, None)
+            await asyncio.to_thread(storage.commit_reply_reservation, reservation_id)
+            receipt = await asyncio.to_thread(notion_client.create_acknowledgement,
+                token=token, discussion_id=discussion_id, content=ACKNOWLEDGEMENT)
+            if not receipt or not receipt.get("id"):
+                raise ValueError("missing_receipt_id")
+            await asyncio.to_thread(storage.save_acknowledgement, comment_id, receipt["id"])
+        except Exception:
+            logger.warning("[notion] Acknowledgement result unverified; no retry or model dispatch")
             return
 
         # Fetch referenced page block text for text selection comments
@@ -560,10 +631,4 @@ class NotionAdapter(BasePlatformAdapter):
                 "author_id": routed.author_id,
             },
         )
-        # At-most-once dispatch: ambiguous failures require explicit human re-addressing.
-        if not await asyncio.to_thread(storage.claim_comment, comment_id):
-            return
-        try:
-            await asyncio.wait_for(self.handle_message(msg_event), timeout=MAX_TURN_SECONDS)
-        except asyncio.TimeoutError:
-            logger.warning("[notion] Dispatch wall-clock budget exceeded")
+        return msg_event
