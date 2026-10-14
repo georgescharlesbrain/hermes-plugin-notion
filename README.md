@@ -56,6 +56,8 @@ Credential resolution uses Hermes' scoped-secret API. Profile-suffixed values pr
 
 ## Connection verification and installation boundary (2026-10-13)
 
+The bullets below record the initial review snapshot, not the current deployment. For current setup and readiness checks, use [the profile setup guide](docs/profile-setup.md). An API identity or an active listener does not establish the webhook subscription's paused state.
+
 - Shared canonical checkout: `/home/hermes/.hermes/plugins/notion`; Greta's `/home/hermes/.hermes/profiles/greta/plugins/notion` symlink resolves there. Baseline was `main` at `a20b231`. Controlled installation of the reviewed branch is separate from gateway reload; verify the exact installed SHA with Git before reporting active behavior.
 - Existing approved profile loaders plus `ntn api v1/users/me` independently authenticated both REST bots in workspace GCB (`982fd186-4e7c-4435-ad62-bf23735bb30f`). Aroa: `aroa | pa koen`, bot user `3f71c0e1-80e8-8148-8d4a-002761fd23b7`. Greta: `greta | family manager | house manager`, bot user `3f71c0e1-80e8-81bb-8268-002765b23008`.
 - Historical Greta identifier `3f7d872b-594c-8120-9081-000252622a03` resolves to a **person** (`greta@ufahamu.xyz`), not the REST integration bot. Do not grant that identity human authority merely because its type is person or configure it as the bot user.
