@@ -9,6 +9,7 @@ import json
 import logging
 import os
 from typing import Any, Dict, List, Optional, Set
+from uuid import UUID
 
 from gateway.config import Platform, PlatformConfig
 from gateway.platforms.base import BasePlatformAdapter, SendResult
@@ -37,6 +38,15 @@ def check_requirements() -> bool:
 
 def is_connected(adapter: Optional[BasePlatformAdapter] = None) -> bool:
     return bool(adapter and getattr(adapter, "_running", False))
+def _log_identifier(value: Any) -> str:
+    """Log only canonical UUID metadata, never arbitrary payload values."""
+    if not isinstance(value, str):
+        return "<missing-or-invalid>"
+    try:
+        return str(UUID(value))
+    except (ValueError, AttributeError):
+        return "<missing-or-invalid>"
+
 
 def _profile_from_path(path: str) -> str:
     path_lower = path.lower()
@@ -327,6 +337,11 @@ class NotionAdapter(BasePlatformAdapter):
             if not isinstance(ev, dict):
                 return web.json_response({"error": "invalid event"}, status=400)
             if self.settings.bot_integration_id and ev.get("integration_id") != self.settings.bot_integration_id:
+                logger.warning(
+                    "[notion] Webhook rejected: integration mismatch for profile %s; expected=%s received=%s",
+                    profile, _log_identifier(self.settings.bot_integration_id),
+                    _log_identifier(ev.get("integration_id")),
+                )
                 return web.json_response({"error": "integration mismatch"}, status=403)
             ev_type = ev.get("type", "")
             entity = ev.get("entity", {})
@@ -340,6 +355,10 @@ class NotionAdapter(BasePlatformAdapter):
 
             if ev_type.startswith("comment") or entity_type == "comment":
                 comment_id = entity_id
+                logger.info(
+                    "[notion] Verified comment.created for profile %s; comment=%s integration=%s",
+                    profile, _log_identifier(entity_id), _log_identifier(ev.get("integration_id")),
+                )
                 if comment_id:
                     self._spawn(self._process_comment_id(comment_id, profile))
 
