@@ -9,6 +9,7 @@ Notion comment collaboration for [Hermes Agent](https://github.com/NousResearch/
 
 ## Guides
 
+- [Set up Notion for a Hermes profile](docs/profile-setup.md): connection settings, secure keys, page access, webhook verification, paused subscriptions and a real comment test.
 - [Human-agent collaboration contract](docs/collaboration-contract.md)
 - [Agent operating guide](docs/agent-operations.md)
 - [Security and deterministic routing](docs/security-routing.md)

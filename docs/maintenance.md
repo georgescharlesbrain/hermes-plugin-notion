@@ -1,5 +1,7 @@
 # Notion integration maintenance
 
+For initial setup and paused subscriptions, use [the Hermes profile setup guide](profile-setup.md).
+
 Read [security and routing](security-routing.md) before rollout. This guide mirrors the Asana plugin's separation of shared implementation, profile-local settings/state, operations and collaboration policy.
 
 ## Inventory and connection checks
