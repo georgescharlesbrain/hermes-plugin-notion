@@ -22,6 +22,7 @@ Notion MCP is not used. This skill does not grant sharing or activate webhooks.
 - Read, search, summarize, create or change an approved page or database.
 - Answer an addressed comment or a permitted discussion follow-up.
 - For connection installation and webhook maintenance, use notion:profile-setup.
+- For workspace knowledge architecture and Family team pages, see `knowledge-management`.
 
 ## Prerequisites and tools
 
@@ -66,7 +67,7 @@ For actual requests, use the real identifier. Read back every write.
 6. For a selected-text edit, use the parent block as context, not as a verified selection. Ask for a quotation if the intended range is ambiguous.
 7. Change only the requested text. Prefer a block PATCH or targeted Markdown update. Preserve unrelated text, formatting, children, pages and databases.
 8. Use pages edit only for an explicitly requested whole-page replacement. It replaces page content; it is not a selection-edit command.
-9. Create pages/databases under an explicit approved parent. Use modern data_source_id row parents when the endpoint requires them.
+9. Create pages/databases under an explicit approved parent. Use modern data_source_id row parents when the endpoint requires them. The primary shared hub is **Family team pages** (`knowledge-management`); assign an `Owner` on promotion.
 10. Execute writes sequentially. Retrieve the changed target and verify content, properties, title and parent. Report partial failures without automatic write retries.
 11. Return one useful final answer in the original discussion. The gateway replaces its fixed receipt with that answer.
 

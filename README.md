@@ -16,6 +16,7 @@ Notion comment collaboration for [Hermes Agent](https://github.com/NousResearch/
 - [Upgrade, profile-local migration, rollback and verification](docs/maintenance.md)
 - [Use Notion](skills/use/SKILL.md), available as `notion:use`: profile-scoped ntn workspace work and bounded comment collaboration.
 - [Set up a Hermes profile](skills/profile-setup/SKILL.md), available as `notion:profile-setup`: connections, webhooks, verification and maintenance.
+- [Knowledge management guidelines](../../skills/note-taking/knowledge-management/SKILL.md), available as `knowledge-management`: GCB Notion workspace architecture, Family team pages shared hub, page ownership, and channel boundaries.
 
 ## Notion is not Asana
 
