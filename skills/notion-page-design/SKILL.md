@@ -39,6 +39,8 @@ small original layout example. Neither reference is an API or Markdown dialect s
    missing or unsupported material before making a change.
 2. State the page's purpose and primary takeaway in native text near the top.
    Use the existing title; keep owner, status and next action visible when relevant.
+   Leave the page-level icon blank (`icon: null`). Do not add emoji or image icons
+   beside page titles. This does not prohibit meaningful icons inside page content.
 3. Build a native heading hierarchy with descriptive text headings, not image
    banners, bold paragraphs or callouts masquerading as headings. Avoid skipped levels.
 4. Prefer a single column. Use at most two columns only for independent parallel

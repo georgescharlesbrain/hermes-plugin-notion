@@ -5,6 +5,8 @@ They are not copied templates or a promise that external integration syntax work
 
 ## Default composition
 
+- Leave page-title icons blank: no page-level emoji, image icon or thumbnail. This
+  preference concerns the page's icon property, not callout icons or other content.
 - Start with the title and a short purpose/takeaway. Add owner/status only when known
   and useful. A gray orientation callout is optional, not a mandatory hero block.
 - Use native heading blocks as the navigation spine. Group paragraphs and lists under
