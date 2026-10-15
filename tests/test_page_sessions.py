@@ -44,6 +44,25 @@ def test_two_discussions_use_one_page_source_and_distinct_reply_anchors(monkeypa
     assert all("Exact highlighted text is not available" in e.text for e in events)
 
 
+@pytest.mark.parametrize("named_home", [False, True])
+def test_comment_prompt_loads_conceptual_guidance_only_in_default_home(monkeypatch, tmp_path, named_home):
+    instance = obj(profile="aroa")
+    if named_home:
+        instance._home = tmp_path / "profiles" / "aroa"
+    monkeypatch.setattr(notion_client, "get_comment", lambda *a: comment("c1", "d1", "aroa ping"))
+    events = []
+    async def handle(event):
+        events.append(event)
+    instance.handle_message = handle
+    asyncio.run(instance._process_comment_id("c1", "aroa"))
+    assert len(events) == 1
+    assert "skill_view(name='notion:use')" in events[0].text
+    assert ("skill_view(name='knowledge-management')" in events[0].text) is (not named_home)
+    if not named_home:
+        assert "technical" in events[0].text
+        assert "conceptual" in events[0].text
+
+
 def test_foreign_address_then_followup_does_not_dispatch_in_previous_owner(monkeypatch):
     instance = obj()
     storage.set_discussion_owner("d1", "greta")

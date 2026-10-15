@@ -13,6 +13,21 @@ def _allowed(name, args):
     if name in ALLOWED_TOOLS:
         return True
     if name == "skill_view":
+        if args.get("name") == "knowledge-management":
+            # Runtime profile, not the logical Notion bot name (default is Aroa).
+            return (get_session_env("HERMES_SESSION_PROFILE", "") == "default" and
+                    get_hermes_home().parent.name != "profiles" and
+                    (args.get("file_path") is None or args.get("file_path") == "" or
+                     isinstance(args.get("file_path"), str) and args["file_path"] in {
+                         "references/workspace.md", "references/wiki-workflows.md",
+                         "references/design-basis.md"}))
+        if args.get("name") == "notion:notion-page-design":
+            # Design guidance is a narrow default-profile addition, not tool access.
+            return (get_session_env("HERMES_SESSION_PROFILE", "") == "default" and
+                    get_hermes_home().parent.name != "profiles" and
+                    (args.get("file_path") is None or args.get("file_path") == "" or
+                     isinstance(args.get("file_path"), str) and args["file_path"] in {
+                         "references/modern-minimal.md", "references/demonstration.md"}))
         return args.get("name") in {"notion:use", "notion:profile-setup"} and (
             not args.get("file_path") or isinstance(args["file_path"], str) and
             not args["file_path"].startswith("/") and ".." not in args["file_path"].split("/"))

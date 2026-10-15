@@ -19,6 +19,7 @@ def register(ctx) -> None:
     for name, description in (
         ("use", "Read Notion, edit approved pages, and answer comments."),
         ("profile-setup", "Set up a profile connection and debug webhook delivery."),
+        ("notion-page-design", "Design readable Notion pages with restrained native blocks."),
     ):
         ctx.register_skill(
             name=name,

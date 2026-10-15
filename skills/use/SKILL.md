@@ -22,7 +22,9 @@ Notion MCP is not used. This skill does not grant sharing or activate webhooks.
 - Read, search, summarize, create or change an approved page or database.
 - Answer an addressed comment or a permitted discussion follow-up.
 - For connection installation and webhook maintenance, use notion:profile-setup.
-- For workspace knowledge architecture and Family team pages, see `knowledge-management`.
+- For page layout, hierarchy and accessibility, load `notion:notion-page-design`; keep design guidance there and technical operations here.
+- On every Notion interaction, load `knowledge-management` for conceptual wiki-manager rules. Technical operations stay in this skill.
+- If the current profile lacks that skill or the comment-turn guard blocks it, report the integration gap. Do not bypass the guard.
 
 ## Prerequisites and tools
 

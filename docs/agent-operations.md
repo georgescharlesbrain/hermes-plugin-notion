@@ -2,14 +2,9 @@
 
 Load this guide and the [collaboration contract](collaboration-contract.md) for Notion work. The [security guide](security-routing.md) distinguishes enforced plugin checks from human operating rules. For workspace organization and guidelines, load the `knowledge-management` skill.
 
-## Workspace architecture and Family team pages
+## Knowledge-management policy
 
-- **GCB Workspace:** All knowledge lives in a single unified workspace.
-- **Family team pages (Shared Hub):** The `Family team pages` wiki (data source `4991c0e1-80e8-825c-87fb-07b29192ef79`, DB `91c1c0e1-80e8-83c1-ab3d-81708b9b98bb`) is the primary home for bot operations, household routines, guidelines, and team roster & roles.
-- **Personal and Agent spaces:** Personal spaces exist for family members, and dedicated wikis exist for agents (Aroa, Greta). Drafts begin in personal or agent spaces.
-- **Page ownership on promotion:** When moving or creating pages in Family team pages, always assign an explicit human `Owner` and/or `Agent owner`.
-- **Channel separation:** Notion holds permanent documentation; Asana manages active execution; Telegram handles direct synchronous chat.
-- **Search:** Search across accessible workspace pages with `ntn api v1/search query="<query>"`.
+Load `knowledge-management` on every Notion interaction. It owns the conceptual wiki-manager rules, Family team pages workspace map, page ownership, and channel boundaries. Keep these rules in that skill, not in a duplicate plugin guide. Use this plugin's skills for technical operations and enforced permissions. A blocked or missing skill is an integration gap, not permission to bypass the tool guard.
 
 ## Choose the right connection
 

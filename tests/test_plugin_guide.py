@@ -15,7 +15,7 @@ def test_plugin_registers_bundled_operating_guide():
         spec.loader.exec_module(module)
         ctx = Mock()
         module.register(ctx)
-        assert ctx.register_skill.call_count == 2
+        assert ctx.register_skill.call_count == 3
         names = set()
         for call in ctx.register_skill.call_args_list:
             kwargs = call.kwargs
@@ -25,7 +25,7 @@ def test_plugin_registers_bundled_operating_guide():
             assert path.is_file()
             assert len(kwargs['description']) <= 60
             assert kwargs['description'].endswith('.')
-        assert names == {'use', 'profile-setup'}
+        assert names == {'use', 'profile-setup', 'notion-page-design'}
     finally:
         for key in list(sys.modules):
             if key == name or key.startswith(name + '.'):

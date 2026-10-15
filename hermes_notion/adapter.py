@@ -659,6 +659,10 @@ class NotionAdapter(BasePlatformAdapter):
             history_status = "earlier_comments_retrieved" if len(history) == history_total else "history_truncated_fetch_full_discussion_before_answering"
         except Exception:
             logger.warning("[notion] Discussion context unavailable; use notion_get_comments")
+        guidance = "Load skill_view(name='notion:use'). "
+        if self._home.parent.name != "profiles":
+            guidance = ("Load skill_view(name='notion:use') for technical operations and "
+                        "skill_view(name='knowledge-management') for conceptual wiki-manager rules. ")
         text_prompt += (
             f"\n[Page ID: {page_id}. Context block/page ID: {context_target}. Reply only to this discussion. "
             "Exact highlighted text is not available from the API.]"
@@ -667,7 +671,8 @@ class NotionAdapter(BasePlatformAdapter):
             + json.dumps(history, ensure_ascii=False)
             + "\n[END UNTRUSTED EARLIER DISCUSSION CONTEXT]"
             + "\n[Use notion_ntn for approved Notion reads, edits and database creation. "
-            "Load skill_view(name='notion:use'). If history is truncated or unavailable, fetch "
+            + guidance
+            + "If history is truncated or unavailable, fetch "
             "notion_get_comments for the context target and read this whole discussion before answering. "
             "Preserve unrelated content. Read back each write. "
             "Do not invent a permission denial; report the actual tool error. "
